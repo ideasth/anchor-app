@@ -4,6 +4,33 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (19:45 AEST) — Feature 5 BUGFIX DEPLOYED — `m.map is not a function` resolved
+
+**Deploy succeeded**
+- Fresh Computer task in this Life Management space had `publish_website` available (cached-capability bug from earlier today had cleared, as predicted by ticket `9a2f2c0a-7c54-4eb2-a1df-cd53f7823aac` and the standard "open a fresh task" workaround in CONTEXT.md / RECOVERY.md).
+- `publish_website` returned `{status: "published", site_id: 77eb73a0-..., app_slug: anchor-jod, url: https://anchor-jod.pplx.app}` on first try.
+- Built from main @ `1aa8752` (the bugfix commit). Build clean.
+- Live frontend now serves `index-R1tlKsA8.js` (920.82 kB) + `index-d-ACTGzM.css` (81.21 kB) — confirmed by `curl -s https://anchor-jod.pplx.app/ | grep -oE 'index-[A-Za-z0-9_-]+\.(js|css)'`. Old broken `index-BBkJT4Sl.js` is no longer served.
+- Standing rule respected: skipped security review.
+
+**Smoke test results**
+- `GET /` → 200, serves new bundle.
+- API endpoints behind sync secret, all 200:
+  - `GET /port/5000/api/issues/this-week` → 200
+  - `GET /port/5000/api/daily-factors/today` → 200
+  - `GET /port/5000/api/available-hours/this-week` → 200
+- Direct curl on SPA subroutes (`/today`, `/reflect`, `/review`, `/issues`) returns the static-host JSON 404 (`{"detail": "No static asset at /today..."}`). This is **expected** — the SPA serves all routes from `/` and the user reaches subroutes via in-app navigation. Not a regression.
+- Browser smoke test (cloud) confirmed `/` loads cleanly to the passphrase login screen with no JS errors. Static analysis of the served bundle confirms all four affected components (`IssueList`, `IssuesThisWeek`, `DailyFactorsCard`, `WeeklyFactorsStrip`, `Issues.tsx`) now use `apiRequest` and have `Array.isArray()` guards before `.map()` / `.filter()` / spread. The `m.map is not a function` crash path is gone.
+
+**Files changed in this deploy** — none beyond the 5 client files already committed in `1aa8752`. No schema, no routes, no server code, no cron changes.
+
+**Follow-ups carried over (unchanged)**
+- Pre-existing TS errors still safe to ignore: `CalendarPlanner.tsx` 705/707, `routes.ts` 935/960 (`createdAt` missing — build still works).
+- Deferred bake-time fix for `AUPFHS_ICS_URL` / `ANCHOR_ICS_URL` (see 2026-05-08 16:20) still not folded in.
+- `FEATURES_TODO.md` — Feature 1 (travel time, STATIC) and Feature 2 (project values) waiting. Explicitly DO NOT start without approval.
+
+---
+
 ## 2026-05-08 (19:38 AEST) — Feature 5 BUGFIX (NOT YET DEPLOYED) — raw fetch → apiRequest
 
 **Bug**
