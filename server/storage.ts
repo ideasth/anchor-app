@@ -328,11 +328,11 @@ for (const stmt of [
 // ICS URL (including GitHub PAT) must be set via ANCHOR_ICS_URL env var.
 // Never hardcode a PAT here — the server bundle ships to pplx.app.
 const DEFAULT_ICS_URL = process.env.ANCHOR_ICS_URL ?? "";
-// AUPFHS Outlook publish URL is a public subscription URL (no PAT), so it's
-// safe to bake in as a default. User-set value via Settings overrides this.
-const DEFAULT_AUPFHS_ICS_URL =
-  process.env.AUPFHS_ICS_URL ??
-  "process.env.AUPFHS_ICS_URL_REQUIRED";
+// AUPFHS Outlook publish URL must be set via AUPFHS_ICS_URL env var.
+// Even though it carries no token, the URL itself grants read access to the
+// owner's work calendar — never hardcode it in the source bundle.
+// User-set value via Settings overrides this.
+const DEFAULT_AUPFHS_ICS_URL = process.env.AUPFHS_ICS_URL ?? "";
 
 const DEFAULT_SETTINGS: SettingsBlob = {
   adhd_tax_coefficient: 1.5,
