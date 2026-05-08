@@ -14,7 +14,12 @@ import Database from "better-sqlite3";
 import { rawSqlite, storage } from "./storage";
 import { backfillCoachSessionSummaries } from "./coach-summary-backfill";
 import { runCoachTelemetrySweepNow } from "./coach-telemetry-sweeper";
-import { listErrors, clearErrors, ringSize } from "./error-buffer";
+import { listErrors, clearErrors, ringSize, recordError } from "./error-buffer";
+import {
+  classifyHeartbeat,
+  parseHeartbeatBody,
+  buildExpectedWindows,
+} from "./cron-heartbeat";
 
 // The cwd-relative path used by storage.ts (`new Database("data.db")`).
 const DB_PATH = path.resolve(process.cwd(), "data.db");
@@ -290,6 +295,30 @@ export function registerAdminDbRoutes(
       lastReceipt = null;
     }
 
+    // Cron heartbeats (Option 3 canary). One row per known cron with the
+    // most-recent heartbeat (or null) plus its anomaly_reason. The Admin UI
+    // shows a red dot when anomalyReason is non-null.
+    let cronHeartbeats: Array<{
+      cronId: string;
+      ranAt: number | null;
+      anomalyReason: string | null;
+      createdAt: number | null;
+    }> = [];
+    try {
+      const allowlist = Object.keys(buildExpectedWindows());
+      cronHeartbeats = allowlist.map((cronId) => {
+        const r = storage.latestCronHeartbeat(cronId);
+        return {
+          cronId,
+          ranAt: r ? r.ranAt : null,
+          anomalyReason: r ? r.anomalyReason : null,
+          createdAt: r ? r.createdAt : null,
+        };
+      });
+    } catch {
+      cronHeartbeats = [];
+    }
+
     // Coach context-bundle telemetry (last 30 days, top 10 keys).
     let coachContextUsage: Array<{ key: string; hits: number; sessions: number }> = [];
     let coachTelemetryEnabled = true;
@@ -324,6 +353,7 @@ export function registerAdminDbRoutes(
           : "Local backup dir not readable from this sandbox. Backups exist on the Computer-side filesystem and are uploaded to OneDrive by cron 8e8b7bb5.",
       },
       crons: KNOWN_CRONS,
+      cronHeartbeats,
       coachContextUsage,
       coachTelemetryEnabled,
     });
@@ -411,6 +441,85 @@ export function registerAdminDbRoutes(
     if (!requireOrchestrator(req, res)) return;
     const removed = clearErrors();
     res.json({ ok: true, removed });
+  });
+
+  // POST /api/admin/cron-heartbeat
+  // Recorded by every known cron as step 0 of its task body (best-effort).
+  // Payload: { cronId: string, ranAt?: number (unix seconds) }
+  // Auth: X-Anchor-Sync-Secret only (no user cookie); cron-only endpoint.
+  //
+  // Anomalies are recorded BOTH durably (cron_heartbeats.anomaly_reason) and
+  // ephemerally in the in-memory error ring so they show up in the Admin UI
+  // "Recent errors" card immediately. Clean heartbeats are silent.
+  app.post(
+    "/api/admin/cron-heartbeat",
+    express.json({ limit: "2kb" }),
+    (req, res) => {
+      if (!requireOrchestrator(req, res)) return;
+      const parsed = parseHeartbeatBody(req.body, Date.now());
+      if (!parsed.ok) {
+        return res.status(400).json({ error: parsed.error });
+      }
+      try {
+        const TWENTY_FOUR_H_MS = 24 * 3600 * 1000;
+        const recent = storage.cronHeartbeatsSince(
+          parsed.cronId,
+          Date.now() - TWENTY_FOUR_H_MS,
+        );
+        const result = classifyHeartbeat({
+          cronId: parsed.cronId,
+          ranAtMs: parsed.ranAtMs,
+          recentHeartbeatsMs: recent.map((r) => r.createdAt),
+        });
+        const stored = storage.recordCronHeartbeat({
+          cronId: parsed.cronId,
+          ranAt: parsed.ranAtMs,
+          anomalyReason: result.anomaly,
+        });
+        if (result.anomaly) {
+          // Surface in the in-memory error ring so the Admin UI shows it.
+          try {
+            recordError({
+              err: new Error(
+                `[cron-heartbeat anomaly:${result.anomaly}] ${result.detail}`,
+              ),
+              statusCode: null,
+              method: "POST",
+              path: "/api/admin/cron-heartbeat",
+            });
+          } catch {
+            /* swallow — recordError must never block */
+          }
+        }
+        res.json({
+          ok: true,
+          id: stored.id,
+          createdAt: stored.createdAt,
+          anomaly: result.anomaly,
+          detail: result.anomaly ? result.detail : undefined,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ error: "failed to record heartbeat", detail: msg.slice(0, 400) });
+      }
+    },
+  );
+
+  // GET /api/admin/cron-heartbeats
+  // Returns the most-recent N heartbeats across all crons. For drilldown
+  // beyond the per-cron summary in /api/admin/health.
+  // Auth: user cookie OR sync secret.
+  app.get("/api/admin/cron-heartbeats", (req, res) => {
+    const guard = requireUserOrOrchestrator ?? requireOrchestrator;
+    if (!guard(req, res)) return;
+    const rawLimit = typeof req.query.limit === "string" ? Number(req.query.limit) : NaN;
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 50;
+    try {
+      res.json({ heartbeats: storage.recentCronHeartbeats(limit) });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "failed to load heartbeats", detail: msg.slice(0, 400) });
+    }
   });
 
   // POST /api/admin/email-priority-recompute

@@ -15,6 +15,52 @@ If yes to any: add a one-line "framing miss" note to your session entry below. T
 
 ---
 
+## 2026-05-09 (00:45 AEST) — Option 3 cron heartbeat canary DEPLOYED
+
+**Status:** Live on https://anchor-jod.pplx.app. tsc clean, vitest 103/103 (was 81; +22 cron-heartbeat). Cron `8e8b7bb5` task body updated via `schedule_cron action=update` with explicit user approval ("approved").
+
+**Why.** User asked "can you generate an error if a cron fires unexpectedly". Picked Option 3 (single-cron canary, 8e8b7bb5 only) over a global watchdog to keep blast radius small. The canary detects three anomaly classes: unknown cronId (forged POST or missing allowlist entry), off-window fire (>30 min jitter from expected UTC schedule), and double-fire (two heartbeats within 24h). Missed-fire detection is intentionally NOT in the canary — cron `d08f13f1` already detects staleness via backup-receipt age.
+
+**What was implemented**
+
+- **`shared/cron-inventory.ts` reused** as the source of truth for the heartbeat allowlist via `buildExpectedWindows()` in `server/cron-heartbeat.ts`. Adding a new cron to the inventory automatically extends the allowlist; removing it makes its heartbeats fire `unknown_cron_id`. Trade-off accepted: an actively-retuned cron without a matching inventory update will trip `off_window` for one cycle.
+
+- **`server/cron-heartbeat.ts` (new).** Pure classifier with no DB dependency: takes `cronId`, `ranAtMs`, and an array of recent heartbeat timestamps; returns `{anomaly, detail}`. Anomaly priority order: `unknown_cron_id` > `off_window` > `double_fire` > clean. The off-window check parses the cron expression's hour-list, dom (must be `*`), and dow (`*` or comma list of 0-6), and computes signed minute-distance to the nearest expected fire-time. Ranges/steps in cron fields are intentionally unsupported (none of our crons use them). `parseHeartbeatBody()` validates the POST payload: cronId must be 4-32 chars (alphanumeric, dash, underscore); ranAt is optional unix seconds (or ms if >= 10^12), rejected if >1 day in the future or >7 days in the past.
+
+- **SQLite migration in `server/storage.ts`.** New `cron_heartbeats` table (id, cron_id, ran_at, anomaly_reason, created_at) with two indices (created_at DESC; cron_id + created_at DESC). Storage methods: `recordCronHeartbeat()` (with 365-row global prune so a runaway double-fire can't fill the table), `latestCronHeartbeat(cronId)`, `recentCronHeartbeats(limit)`, `cronHeartbeatsSince(cronId, sinceMs)`. The migration is idempotent so existing live DBs adopt the schema without manual intervention.
+
+- **`POST /api/admin/cron-heartbeat`** in `server/admin-db.ts`. Sync-secret only (no user cookie — cron-only endpoint). Body: `{cronId, ranAt?}`. Pulls the last 24h of heartbeats for that cron, classifies, records with the anomaly_reason set, and on anomaly ALSO calls `recordError()` on the in-memory error ring so the Admin UI's Recent errors card surfaces it immediately. Always returns 200 even on anomaly so the cron sees success and doesn't retry.
+
+- **`GET /api/admin/cron-heartbeats`** (cookie OR sync-secret) for drilldown. Returns most-recent N heartbeats across all crons.
+
+- **`/api/admin/health` extended** with a `cronHeartbeats` field: one row per allowlisted cron with the most-recent heartbeat (or null). The Admin UI's Scheduled crons card now shows last-heartbeat timestamp per cron and a red dot + monospace `anomaly: <reason>` line when the latest heartbeat had an anomaly.
+
+- **Cron `8e8b7bb5` task body update.** Prepended a new step 0 that POSTs the heartbeat with `|| true` so it CANNOT block the backup. Step 0 is documented as best-effort and explicitly outside the success criteria. Old steps 1-6 unchanged (numbering preserved). The cron next runs Sun 10 May 03:00 AEST — expected: silent success on the backup, plus a clean (anomaly=null) heartbeat row visible on the Admin UI.
+
+- **`test/cron-heartbeat.test.ts` (22 cases).** Covers `buildExpectedWindows` (every inventory cron present, currentCron used not aedtCron); clean heartbeats (on-schedule, jitter window, multi-hour comma-list crons); each anomaly class (unknown_cron_id, off_window for wrong hour / wrong weekday / outside jitter); double_fire detection plus 7-day-clean weekly verification; anomaly priority ordering; `parseHeartbeatBody` validation (rejects malformed cronId, accepts unix-seconds AND ms, rejects out-of-range ranAt).
+
+**Smoke tests (live).** Posted `{cronId:"8e8b7bb5"}` at the wrong hour — returned `{anomaly:"off_window", detail:"...1440 min outside the expected window..."}`. Posted `{cronId:"deadbeef"}` — returned `{anomaly:"unknown_cron_id"}`. Both anomalies appeared in `/api/admin/recent-errors` immediately. Cleared the error ring after smoke test (the cron_heartbeats rows remain in the live DB; they will be replaced by Sun 10 May's real fire because `latestCronHeartbeat()` orders by created_at DESC).
+
+**Risks documented**
+- Allowlist drift if a cron gets retuned without updating `shared/cron-inventory.ts`: the next heartbeat trips `off_window`. Mitigation: cron-inventory drift test enforces inventory shape; document the expectation in HANDOFF.
+- The published sandbox is ephemeral, so the cron_heartbeats table travels with `data.db` snapshots only. The 365-row prune ensures the table stays small even if the cron double-fires forever.
+- Heartbeat POST failure cannot block the backup (`|| true`). Trade-off: if the heartbeat endpoint is down, we lose the canary signal that cycle; acceptable because the backup itself produces an independent durable signal (OneDrive file + receipt row).
+- Pre-existing `f04511c0` cron mentioned in CONTEXT.md is NOT in `AEDT_RETUNE_INVENTORY`, so if it ever POSTs a heartbeat it will fire `unknown_cron_id`. Item M (verify f04511c0 status) remains open.
+
+**Watch tonight.** Cron `d08f13f1` fires Sat 9 May 18:00 AEST — expected: "backup-receipt loop verified" notification (the smoke-test receipt id=2 from the previous batch is recent enough to be "fresh"). Cron `8e8b7bb5` fires Sun 10 May 03:00 AEST — expected: silent success, clean heartbeat row replaces the smoke-test off_window row in `latestCronHeartbeat("8e8b7bb5")`.
+
+**Files changed**
+- `server/storage.ts` (cron_heartbeats migration + 4 storage methods)
+- `server/cron-heartbeat.ts` (NEW — pure classifier, ~237 lines)
+- `server/admin-db.ts` (POST + GET endpoints, cronHeartbeats in /health)
+- `client/src/pages/Admin.tsx` (HealthResponse type + per-cron heartbeat block)
+- `test/cron-heartbeat.test.ts` (NEW — 22 cases)
+- Cron `8e8b7bb5` task body via schedule_cron API (step 0 prepended)
+
+**Framing miss check.** No: cron edit was preceded by explicit per-cron approval ("approved"). No Inbox page proposed. No Outlook writes proposed. No secret baked into commit. CI's secret-check (added in the prior batch) will catch any future drift.
+
+---
+
 ## 2026-05-09 (00:15 AEST) — Revised batch (A, B+D-merge, C-Opt3, E, H-lite) DEPLOYED
 
 **Status:** Live on https://anchor-jod.pplx.app. Commits `0de5254` on `main`. tsc clean, vitest 81/81 (was 59; +13 cron-inventory, +9 error-buffer). Pre-commit hook fired. Two cron task body updates applied via schedule_cron action=update with explicit user approval.

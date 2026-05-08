@@ -150,6 +150,12 @@ interface HealthResponse {
     cron: string;
     note: string;
   }>;
+  cronHeartbeats?: Array<{
+    cronId: string;
+    ranAt: number | null;
+    anomalyReason: string | null;
+    createdAt: number | null;
+  }>;
   coachContextUsage?: Array<{ key: string; hits: number; sessions: number }>;
   coachTelemetryEnabled?: boolean;
 }
@@ -565,21 +571,59 @@ function HealthDashboard() {
               {data.crons.length === 0 && (
                 <div className="text-sm italic text-muted-foreground">No crons known.</div>
               )}
-              {data.crons.map((c) => (
-                <div key={c.id} className="rounded-md border p-3">
-                  <div className="flex items-baseline justify-between gap-2 flex-wrap">
-                    <div className="font-medium">{c.name}</div>
-                    <code className="text-xs text-muted-foreground">{c.id}</code>
+              {data.crons.map((c) => {
+                const hb = (data.cronHeartbeats ?? []).find(
+                  (h) => h.cronId === c.id,
+                );
+                const hasAnomaly = !!hb?.anomalyReason;
+                return (
+                  <div key={c.id} className="rounded-md border p-3">
+                    <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                      <div className="font-medium flex items-center gap-2">
+                        {hasAnomaly && (
+                          <span
+                            className="inline-block h-2 w-2 rounded-full bg-destructive"
+                            title="Last heartbeat had an anomaly"
+                            data-testid={`cron-anomaly-dot-${c.id}`}
+                          />
+                        )}
+                        {c.name}
+                      </div>
+                      <code className="text-xs text-muted-foreground">{c.id}</code>
+                    </div>
+                    <div className="text-xs mt-1">
+                      Schedule: <code className="font-mono">{c.cron}</code>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">{c.note}</div>
+                    {hb && (
+                      <div className="text-xs mt-2 space-y-1">
+                        <div className="text-muted-foreground">
+                          Last heartbeat:{" "}
+                          {fmtAbs(hb.createdAt ?? null)}
+                          {fmtRelative(hb.createdAt ?? null)}
+                        </div>
+                        {hb.anomalyReason && (
+                          <div
+                            className="text-destructive font-mono text-[11px]"
+                            data-testid={`cron-anomaly-reason-${c.id}`}
+                          >
+                            anomaly: {hb.anomalyReason}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {!hb && (
+                      <div className="text-xs text-muted-foreground italic mt-2">
+                        No heartbeat recorded yet.
+                      </div>
+                    )}
                   </div>
-                  <div className="text-xs mt-1">
-                    Schedule: <code className="font-mono">{c.cron}</code>
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">{c.note}</div>
-                </div>
-              ))}
+                );
+              })}
               <div className="text-xs text-muted-foreground italic">
                 Live run history is in the Perplexity scheduler UI — this dashboard
-                only shows static cron metadata baked into the build.
+                only shows static cron metadata baked into the build, plus the
+                most-recent heartbeat per cron.
               </div>
             </CardContent>
           </Card>

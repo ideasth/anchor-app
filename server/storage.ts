@@ -480,6 +480,16 @@ CREATE TABLE IF NOT EXISTS backup_receipts (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_backup_receipts_created ON backup_receipts(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS cron_heartbeats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cron_id TEXT NOT NULL,
+  ran_at INTEGER NOT NULL,
+  anomaly_reason TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cron_heartbeats_created ON cron_heartbeats(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cron_heartbeats_cron_created ON cron_heartbeats(cron_id, created_at DESC);
 `);
 
 // Add new columns to existing tasks table if missing (idempotent)
@@ -1712,6 +1722,123 @@ export class Storage {
         }
       | undefined;
     return row ?? null;
+  }
+
+  // ----- Cron heartbeats (Option 3 canary) -----
+  // Each known cron POSTs a heartbeat as step 0 of its task body. Anomalies
+  // (unknown cronId, off-window fire, double-fire) are recorded in
+  // anomaly_reason and surfaced by the Admin UI plus the in-memory error ring.
+  recordCronHeartbeat(input: {
+    cronId: string;
+    ranAt: number;
+    anomalyReason?: string | null;
+  }): { id: number; createdAt: number } {
+    const createdAt = Date.now();
+    const result = sqlite
+      .prepare(
+        `INSERT INTO cron_heartbeats (cron_id, ran_at, anomaly_reason, created_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(
+        input.cronId,
+        input.ranAt,
+        input.anomalyReason ?? null,
+        createdAt,
+      );
+    // Prune to last 365 rows globally — heartbeats are <10/week so this gives
+    // ~7 years of headroom, but the cap protects against runaway double-fires.
+    try {
+      sqlite.exec(
+        `DELETE FROM cron_heartbeats WHERE id NOT IN (
+           SELECT id FROM cron_heartbeats ORDER BY created_at DESC LIMIT 365
+         )`,
+      );
+    } catch {
+      /* swallow — pruning is best-effort */
+    }
+    return { id: Number(result.lastInsertRowid), createdAt };
+  }
+
+  /**
+   * Latest heartbeat for a single cron id, or null if never recorded.
+   */
+  latestCronHeartbeat(cronId: string): {
+    id: number;
+    cronId: string;
+    ranAt: number;
+    anomalyReason: string | null;
+    createdAt: number;
+  } | null {
+    const row = sqlite
+      .prepare(
+        `SELECT id, cron_id as cronId, ran_at as ranAt, anomaly_reason as anomalyReason, created_at as createdAt
+         FROM cron_heartbeats
+         WHERE cron_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get(cronId) as
+      | {
+          id: number;
+          cronId: string;
+          ranAt: number;
+          anomalyReason: string | null;
+          createdAt: number;
+        }
+      | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Most-recent N heartbeats across all crons (default 50).
+   */
+  recentCronHeartbeats(limit = 50): Array<{
+    id: number;
+    cronId: string;
+    ranAt: number;
+    anomalyReason: string | null;
+    createdAt: number;
+  }> {
+    const n = Math.max(1, Math.min(Math.floor(limit), 365));
+    const rows = sqlite
+      .prepare(
+        `SELECT id, cron_id as cronId, ran_at as ranAt, anomaly_reason as anomalyReason, created_at as createdAt
+         FROM cron_heartbeats
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(n) as Array<{
+      id: number;
+      cronId: string;
+      ranAt: number;
+      anomalyReason: string | null;
+      createdAt: number;
+    }>;
+    return rows;
+  }
+
+  /**
+   * Heartbeats within the last `withinSeconds` for a given cron, oldest first.
+   * Used by anomaly detection to spot double-fires.
+   */
+  cronHeartbeatsSince(cronId: string, sinceUnixMs: number): Array<{
+    id: number;
+    ranAt: number;
+    createdAt: number;
+  }> {
+    const rows = sqlite
+      .prepare(
+        `SELECT id, ran_at as ranAt, created_at as createdAt
+         FROM cron_heartbeats
+         WHERE cron_id = ? AND created_at >= ?
+         ORDER BY created_at ASC`,
+      )
+      .all(cronId, sinceUnixMs) as Array<{
+      id: number;
+      ranAt: number;
+      createdAt: number;
+    }>;
+    return rows;
   }
 }
 
