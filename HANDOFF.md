@@ -4,6 +4,71 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (12:55 AEST) — Repo public; admin endpoints rebuilt; `publish_website` STILL gated
+
+**Completed**
+- Repo `ideasth/anchor-app` is now PUBLIC. Default branch swapped to `main` at `ccb5a8c`. Stale `master` deleted from origin. AUPFHS URL fully scrubbed from history (`git filter-repo`).
+- Anonymous clone confirmed working: `git clone https://github.com/ideasth/anchor-app.git` (no creds, no proxy).
+- Built `dist/public/assets/index-OJD7pA68.js` + `dist/index.cjs` (1018kb, all 3 admin endpoints present: export/import/status). Build steps: ensure `/home/user/workspace/.secrets/anchor_sync_secret` exists → write `server/baked-secret.ts` (gitignored) with `export const BAKED_SYNC_SECRET = "<secret>";` → `npm ci && npm run build`.
+- Cron `f04511c0` updated with Cloudflare User-Agent workaround (every Anchor API call must send `User-Agent: anchor-cron/1.0 (perplexity-cron)` — Python urllib default UA is blocked by CF rule 1010 with HTTP 403). Schedule unchanged.
+
+**STILL BLOCKED — production deploy**
+- `publish_website` returned `{"error":"Website publishing is not enabled"}` in this thread again. `deploy_website` (preview-only) works, but only updates static S3 assets — the running server on `anchor-jod.pplx.app` keeps the OLD bundle (`index-zFvB7OZP.js` + admin endpoints absent).
+- Same root cause as diagnostic `9a2f2c0a-7c54-4eb2-a1df-cd53f7823aac`. Open a fresh thread to pick up the publish.
+
+**Next thread — exact steps to deploy**
+```
+# 1. Recreate secret if not present.
+# The literal value lives in the space Instructions block (Bootstrap section) and
+# is NOT in this repo. The space's bootstrap rule writes it to the path below at
+# the start of any thread. If you're running this manually, copy the value from
+# the space Instructions, then:
+#   mkdir -p /home/user/workspace/.secrets
+#   printf '%s' '<paste-secret-from-space-instructions>' > /home/user/workspace/.secrets/anchor_sync_secret
+#   chmod 600 /home/user/workspace/.secrets/anchor_sync_secret
+# In a thread that auto-bootstraps, just run:
+ls /home/user/workspace/.secrets/anchor_sync_secret  # should already exist
+
+# 2. Clone (NO credentials needed — repo is public)
+git clone https://github.com/ideasth/anchor-app.git /home/user/workspace/anchor
+cd /home/user/workspace/anchor
+
+# 3. Bake secret (file is gitignored)
+SECRET=$(cat /home/user/workspace/.secrets/anchor_sync_secret)
+cat > server/baked-secret.ts <<EOF
+export const BAKED_SYNC_SECRET = "$SECRET";
+EOF
+
+# 4. Build
+npm ci && npm run build
+
+# 5. Publish (re-use existing site_id)
+publish_website(
+  project_path="/home/user/workspace/anchor",
+  dist_path="/home/user/workspace/anchor/dist/public",
+  app_name="Anchor — Oliver Daly",
+  install_command="npm ci --omit=dev",
+  run_command="NODE_ENV=production node dist/index.cjs",
+  port=5000,
+  site_id="77eb73a0-40d8-4ae2-9a78-4239f106294b",
+  # NO credentials param — secret is baked. Per standing rule.
+)
+
+# 6. Verify
+SECRET=$(cat /home/user/workspace/.secrets/anchor_sync_secret)
+curl -sS -H "X-Anchor-Sync-Secret: $SECRET" https://anchor-jod.pplx.app/port/5000/api/admin/db/status
+# Expected: JSON with dbPath, sizeBytes, importEnabled — NOT SPA HTML
+
+# 7. First fresh DB snapshot
+curl -sS -H "X-Anchor-Sync-Secret: $SECRET" \
+  https://anchor-jod.pplx.app/port/5000/api/admin/db/export \
+  -o /home/user/workspace/anchor-data-backup-fresh.db
+```
+
+**AUPFHS_ICS_URL note**: not currently set as a publish env var. The calendar feed will silently use empty string until set. The URL itself is at `/home/user/workspace/.secrets/aupfhs_ics_url`. If user wants it active in production, add it via the platform's env config (publish_website does NOT take arbitrary env vars; supabase-only `credentials` param is a different mechanism).
+
+---
+
 ## 2026-05-08 (later) — Admin DB export/import endpoints
 
 **What was added** (commit pending — see `server/admin-db.ts`):
