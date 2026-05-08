@@ -12,6 +12,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { todayDateStr, fmtTime, fmtDuration } from "@/lib/anchor";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DailyFactorsCard } from "@/components/DailyFactorsCard";
+import { IssueList } from "@/components/IssueList";
 
 interface CalEvent {
   uid: string;
@@ -347,6 +349,36 @@ export default function Today() {
             />
           ))}
         </div>
+      </section>
+
+      {/* Mood & factors quick check-in */}
+      <section data-testid="section-today-factors">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-medium text-muted-foreground">Mood &amp; factors</h2>
+          <Link href="/reflect">
+            <span className="text-xs text-primary hover:underline">Open Reflect</span>
+          </Link>
+        </div>
+        <div className="rounded-lg border border-card-border bg-card p-4">
+          <DailyFactorsCard variant="compact" />
+        </div>
+      </section>
+
+      {/* Issues logged today */}
+      <section data-testid="section-today-issues">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-medium text-muted-foreground">Today's issues</h2>
+          <Link href="/issues">
+            <span className="text-xs text-primary hover:underline">Open Issues</span>
+          </Link>
+        </div>
+        <IssueList
+          from={date}
+          to={date}
+          emptyText="No life issues logged today."
+          showDate={false}
+          compact
+        />
       </section>
 
       {/* Done today */}

@@ -17,6 +17,10 @@ import { Sunrise, Trash2, Check, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Logo } from "@/components/Logo";
 import { AvailableHoursCard } from "@/components/AvailableHoursCard";
+import { DailyFactorsCard } from "@/components/DailyFactorsCard";
+import { IssueQuickAdd } from "@/components/IssueQuickAdd";
+import { IssueList } from "@/components/IssueList";
+import { todayDateStr } from "@/lib/anchor";
 import type { MorningRoutine, Task } from "@shared/schema";
 import { domainLabel, DOMAIN_OPTIONS, ESTIMATE_PRESETS } from "@/lib/anchor";
 import { cn } from "@/lib/utils";
@@ -402,6 +406,21 @@ export default function Morning() {
         )}
       </section>
 
+      {/* Section 1b: Mood & Factors check-in (compact) */}
+      <section className="space-y-4 mb-12" data-testid="section-daily-factors">
+        <header>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">
+            Mood &amp; factors
+          </div>
+          <h2 className="text-xl font-semibold mt-1">A quick check-in</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Light-touch read on mood, energy, load, sleep, focus, and values alignment.
+            Fill what feels true; come back later for the rest.
+          </p>
+        </header>
+        <DailyFactorsCard variant="compact" />
+      </section>
+
       {/* Section 2: Braindump */}
       <section className="space-y-4 mb-12" data-testid="section-braindump">
         <header>
@@ -463,6 +482,33 @@ export default function Morning() {
             )}
           </>
         )}
+      </section>
+
+      {/* Section 2b: Issues mini-section (logs to the Issues page) */}
+      <section className="space-y-4 mb-12" data-testid="section-morning-issues">
+        <header>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">
+            Anything pressing?
+          </div>
+          <h2 className="text-xl font-semibold mt-1">Log a life issue</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Optional. Tag any pressure that's present this morning. Multiple categories
+            are fine. Manage the full log on the Issues page.
+          </p>
+        </header>
+        <div className="rounded-lg border border-card-border bg-card p-4">
+          <IssueQuickAdd sourcePage="morning" defaultDate={todayDateStr()} />
+        </div>
+        <div className="space-y-2">
+          <div className="text-sm font-medium text-muted-foreground">Today's issues</div>
+          <IssueList
+            from={todayDateStr()}
+            to={todayDateStr()}
+            emptyText="Nothing logged for today yet."
+            showDate={false}
+            compact
+          />
+        </div>
       </section>
 
       {/* Section 3: Top 3 */}

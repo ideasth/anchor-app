@@ -173,6 +173,53 @@ export const insertMorningRoutineSchema = createInsertSchema(morningRoutines).om
 export type InsertMorningRoutine = z.infer<typeof insertMorningRoutineSchema>;
 export type MorningRoutine = typeof morningRoutines.$inferSelect;
 
+// Daily factors (mood + lightweight measures, one row per local YYYY-MM-DD)
+// All measure columns nullable so the user can fill in progressively.
+export const dailyFactors = sqliteTable("daily_factors", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  date: text("date").notNull().unique(), // YYYY-MM-DD (local, AEST/AEDT)
+  mood: text("mood"), // positive | neutral | strained
+  energy: text("energy"), // low | moderate | high
+  cognitiveLoad: text("cognitive_load"), // high | moderate | low
+  sleepQuality: text("sleep_quality"), // restorative | adequate | poor
+  focus: text("focus"), // focused | scattered
+  valuesAlignment: text("values_alignment"), // aligned | neutral | misaligned
+  capturedAt: integer("captured_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const insertDailyFactorsSchema = createInsertSchema(dailyFactors).omit({
+  id: true,
+  capturedAt: true,
+  updatedAt: true,
+});
+export type InsertDailyFactors = z.infer<typeof insertDailyFactorsSchema>;
+export type DailyFactors = typeof dailyFactors.$inferSelect;
+
+// Contextual life issues log
+// Categorical, non-judgemental signals that may correlate with mood/energy.
+export const issues = sqliteTable("issues", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  createdYmd: text("created_ymd").notNull(), // YYYY-MM-DD the issue was logged against
+  category: text("category").notNull(), // relationship | house | kids | work | other
+  note: text("note"), // optional single-line context
+  needSupport: integer("need_support").notNull().default(0), // 0/1
+  supportType: text("support_type"), // listen | problem_solve | practical (only when needSupport=1)
+  status: text("status").notNull().default("open"), // open | ongoing | resolved
+  resolvedYmd: text("resolved_ymd"), // set when status -> resolved
+  sourcePage: text("source_page").notNull().default("reflect"), // morning | reflect | issues
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const insertIssueSchema = createInsertSchema(issues).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertIssue = z.infer<typeof insertIssueSchema>;
+export type Issue = typeof issues.$inferSelect;
+
 // Sync queue (orchestrator drives this)
 export const syncQueue = sqliteTable("sync_queue", {
   id: integer("id").primaryKey({ autoIncrement: true }),

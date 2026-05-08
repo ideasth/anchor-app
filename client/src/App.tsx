@@ -20,6 +20,7 @@ import Usage from "@/pages/Usage";
 import EmailStatus from "@/pages/EmailStatus";
 import Projects from "@/pages/Projects";
 import ProjectDetail from "@/pages/ProjectDetail";
+import Issues from "@/pages/Issues";
 import Login from "@/pages/Login";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
@@ -37,6 +38,7 @@ function AppRouter() {
       <Route path="/habits" component={HabitsPage} />
       <Route path="/reflect" component={Reflect} />
       <Route path="/review" component={Review} />
+      <Route path="/issues" component={Issues} />
       <Route path="/calendar-planner" component={CalendarPlanner} />
       {/* Legacy redirects — keep deep links + bookmarks working */}
       <Route path="/calendar" component={CalendarPlanner} />

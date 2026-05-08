@@ -2,6 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import type { Reflection, Task } from "@shared/schema";
 import { fmtDuration } from "@/lib/anchor";
 import { AvailableHoursCard } from "@/components/AvailableHoursCard";
+import { WeeklyFactorsStrip } from "@/components/WeeklyFactorsStrip";
+import { IssuesThisWeek } from "@/components/IssuesThisWeek";
 
 interface WeeklyReview {
   from: string;
@@ -49,6 +51,16 @@ export default function Review() {
       <section>
         <h2 className="text-sm font-medium mb-3">Available project time</h2>
         <AvailableHoursCard variant="detailed" />
+      </section>
+
+      <section>
+        <h2 className="text-sm font-medium mb-3">Mood &amp; factors this week</h2>
+        <WeeklyFactorsStrip />
+      </section>
+
+      <section>
+        <h2 className="text-sm font-medium mb-3">Issues this week</h2>
+        <IssuesThisWeek />
       </section>
 
       <section>

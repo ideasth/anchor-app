@@ -1047,5 +1047,158 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(summary);
   });
 
+  // ====== DAILY FACTORS (Mood + lightweight measures) ======
+  // Allowed values per measure — kept loose at the API layer; UI enforces choice.
+  const FACTOR_KEYS = [
+    "mood",
+    "energy",
+    "cognitiveLoad",
+    "sleepQuality",
+    "focus",
+    "valuesAlignment",
+  ] as const;
+
+  app.get("/api/daily-factors/today", (_req, res) => {
+    const date = melbourneDateStr();
+    const row = storage.getDailyFactors(date) ?? null;
+    res.json({ date, factors: row });
+  });
+
+  app.get("/api/daily-factors/:ymd", (req, res) => {
+    const ymd = String(req.params.ymd);
+    const row = storage.getDailyFactors(ymd) ?? null;
+    res.json({ date: ymd, factors: row });
+  });
+
+  app.patch("/api/daily-factors/:ymd", (req, res) => {
+    const ymd = String(req.params.ymd);
+    const patch: any = {};
+    for (const k of FACTOR_KEYS) {
+      if (k in (req.body ?? {})) {
+        const v = req.body[k];
+        patch[k] = v === "" || v === undefined ? null : v;
+      }
+    }
+    const row = storage.upsertDailyFactors(ymd, patch);
+    res.json(row);
+  });
+
+  app.get("/api/daily-factors", (req, res) => {
+    const from = String(req.query.from ?? "");
+    const to = String(req.query.to ?? "");
+    if (!from || !to) {
+      return res.status(400).json({ error: "from and to query params required (YYYY-MM-DD)" });
+    }
+    res.json(storage.listDailyFactorsBetween(from, to));
+  });
+
+  // ====== ISSUES (contextual life issues log) ======
+  const ISSUE_CATEGORIES = new Set(["relationship", "house", "kids", "work", "other"]);
+  const ISSUE_STATUSES = new Set(["open", "ongoing", "resolved"]);
+  const SUPPORT_TYPES = new Set(["listen", "problem_solve", "practical"]);
+
+  app.get("/api/issues", (req, res) => {
+    const opts: { status?: string; from?: string; to?: string } = {};
+    if (req.query.status) opts.status = String(req.query.status);
+    if (req.query.from) opts.from = String(req.query.from);
+    if (req.query.to) opts.to = String(req.query.to);
+    res.json(storage.listIssues(opts));
+  });
+
+  app.get("/api/issues/this-week", (_req, res) => {
+    const today = melbourneDateStr();
+    // Compute Monday of current week (Melbourne) using Date math.
+    const d = new Date(today + "T00:00:00");
+    const dow = d.getDay(); // Sun=0..Sat=6
+    const offsetToMonday = dow === 0 ? -6 : 1 - dow;
+    const monday = new Date(d);
+    monday.setDate(d.getDate() + offsetToMonday);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    const fmt = (x: Date) =>
+      `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+    const mondayYmd = fmt(monday);
+    const sundayYmd = fmt(sunday);
+    // Issues created this week, plus any still-open/ongoing issues from earlier.
+    const thisWeek = storage.listIssues({ from: mondayYmd, to: sundayYmd });
+    const carriedOver = storage
+      .listIssues({})
+      .filter(
+        (i) =>
+          (i.status === "open" || i.status === "ongoing") &&
+          i.createdYmd < mondayYmd,
+      );
+    res.json({
+      mondayYmd,
+      sundayYmd,
+      thisWeek,
+      carriedOver,
+    });
+  });
+
+  app.get("/api/issues/:id", (req, res) => {
+    const id = Number(req.params.id);
+    const row = storage.getIssue(id);
+    if (!row) return res.status(404).json({ error: "not found" });
+    res.json(row);
+  });
+
+  app.post("/api/issues", (req, res) => {
+    const b = req.body ?? {};
+    if (!ISSUE_CATEGORIES.has(b.category)) {
+      return res.status(400).json({ error: "invalid category" });
+    }
+    const status = b.status && ISSUE_STATUSES.has(b.status) ? b.status : "open";
+    const supportType = b.supportType && SUPPORT_TYPES.has(b.supportType) ? b.supportType : null;
+    const row = storage.createIssue({
+      createdYmd: String(b.createdYmd ?? melbourneDateStr()),
+      category: b.category,
+      note: b.note ? String(b.note).slice(0, 200) : null,
+      needSupport: b.needSupport ? 1 : 0,
+      supportType: b.needSupport ? supportType : null,
+      status,
+      resolvedYmd: status === "resolved" ? String(b.resolvedYmd ?? melbourneDateStr()) : null,
+      sourcePage: String(b.sourcePage ?? "reflect"),
+    });
+    res.json(row);
+  });
+
+  app.patch("/api/issues/:id", (req, res) => {
+    const id = Number(req.params.id);
+    const existing = storage.getIssue(id);
+    if (!existing) return res.status(404).json({ error: "not found" });
+    const b = req.body ?? {};
+    const patch: any = {};
+    if ("category" in b) {
+      if (!ISSUE_CATEGORIES.has(b.category)) return res.status(400).json({ error: "invalid category" });
+      patch.category = b.category;
+    }
+    if ("note" in b) patch.note = b.note ? String(b.note).slice(0, 200) : null;
+    if ("needSupport" in b) {
+      patch.needSupport = b.needSupport ? 1 : 0;
+      if (!b.needSupport) patch.supportType = null;
+    }
+    if ("supportType" in b) {
+      patch.supportType = b.supportType && SUPPORT_TYPES.has(b.supportType) ? b.supportType : null;
+    }
+    if ("status" in b) {
+      if (!ISSUE_STATUSES.has(b.status)) return res.status(400).json({ error: "invalid status" });
+      patch.status = b.status;
+      if (b.status === "resolved") {
+        patch.resolvedYmd = String(b.resolvedYmd ?? melbourneDateStr());
+      } else {
+        patch.resolvedYmd = null;
+      }
+    }
+    const row = storage.updateIssue(id, patch);
+    res.json(row);
+  });
+
+  app.delete("/api/issues/:id", (req, res) => {
+    const id = Number(req.params.id);
+    storage.deleteIssue(id);
+    res.json({ ok: true });
+  });
+
   return httpServer;
 }

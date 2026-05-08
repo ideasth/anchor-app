@@ -7,6 +7,9 @@ import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import { todayDateStr } from "@/lib/anchor";
 import { useToast } from "@/hooks/use-toast";
+import { DailyFactorsCard } from "@/components/DailyFactorsCard";
+import { IssueQuickAdd } from "@/components/IssueQuickAdd";
+import { IssueList } from "@/components/IssueList";
 
 const STATES = [
   { value: "calm", label: "Calm" },
@@ -152,6 +155,42 @@ export default function Reflect() {
         <Button onClick={submitDaily} data-testid="button-submit-daily">
           Save daily reflection
         </Button>
+      </section>
+
+      {/* Mood & Factors (full) */}
+      <section className="space-y-4 border-t pt-8" data-testid="section-reflect-factors">
+        <div>
+          <h2 className="text-base font-semibold">Mood &amp; factors</h2>
+          <p className="text-xs text-muted-foreground">
+            Six light-touch measures. Tap to set, tap again to clear. Saves automatically.
+          </p>
+        </div>
+        <DailyFactorsCard variant="full" />
+      </section>
+
+      {/* Issues — log and review today's */}
+      <section className="space-y-4 border-t pt-8" data-testid="section-reflect-issues">
+        <div>
+          <h2 className="text-base font-semibold">Life issues</h2>
+          <p className="text-xs text-muted-foreground">
+            Tag any pressure that's present. Multiple categories are fine. Manage the
+            full log on the Issues page.
+          </p>
+        </div>
+        <div className="rounded-lg border border-card-border bg-card p-4">
+          <IssueQuickAdd sourcePage="reflect" defaultDate={todayDateStr()} />
+        </div>
+        <div className="space-y-2">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">
+            Today's issues
+          </div>
+          <IssueList
+            from={todayDateStr()}
+            to={todayDateStr()}
+            emptyText="Nothing logged for today yet."
+            showDate={false}
+          />
+        </div>
       </section>
 
       {/* Weekly */}

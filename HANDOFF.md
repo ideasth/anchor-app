@@ -4,6 +4,50 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (17:55 AEST) — Feature 5 LIVE — Mood/Factors + Issues Log
+
+**Deploy succeeded**
+- `publish_website` succeeded with `site_id=77eb73a0-...` — gating remains cleared (second successful publish this thread).
+- Live frontend now serves `index-BBkJT4Sl.js` (920.7 kB) + `index-d-ACTGzM.css` (81.2 kB). Server bundle `dist/index.cjs` ~1.0 MB.
+- Standing rule respected: security review skipped.
+
+**What's new — schema** (`shared/schema.ts`, `server/storage.ts`)
+- `daily_factors` table — UNIQUE per `date` (YYYY-MM-DD). Six nullable text columns: `mood`, `energy`, `cognitiveLoad`, `sleepQuality`, `focus`, `valuesAlignment`. `capturedAt`, `updatedAt` timestamps. Partial upsert via PATCH so users fill progressively.
+- `issues` table — `category` (relationship | house | kids | work | other), `note` (≤200 chars), `needSupport` (0/1), `supportType` (listen | problem_solve | practical), `status` (open | ongoing | resolved), `resolvedYmd`, `sourcePage` (morning | reflect | issues), `createdYmd`, timestamps.
+- Exported types: `DailyFactors`, `InsertDailyFactors`, `Issue`, `InsertIssue`.
+
+**New endpoints** (`server/routes.ts`)
+- `GET /api/daily-factors/today`
+- `GET /api/daily-factors/:ymd` → `{date, factors}`
+- `PATCH /api/daily-factors/:ymd` — partial upsert
+- `GET /api/daily-factors?from=&to=` — range
+- `GET /api/issues/this-week` → `{mondayYmd, sundayYmd, thisWeek, carriedOver}`
+- `GET /api/issues?status=&from=&to=`, `GET /api/issues/:id`, `POST /api/issues`, `PATCH /api/issues/:id`, `DELETE /api/issues/:id`
+- Route ordering: `/today` and `/this-week` placed before `/:ymd`/`/:id` to avoid Express path conflicts.
+
+**Frontend wiring**
+- New shared module `client/src/lib/factors.ts` — `FACTOR_MEASURES`, `ISSUE_CATEGORIES`, `SUPPORT_TYPES`, `ISSUE_STATUSES`, helpers.
+- New components: `DailyFactorsCard` (compact|full), `IssueQuickAdd`, `IssueRow`, `IssueList`, `IssuesThisWeek`, `WeeklyFactorsStrip`.
+- New page `client/src/pages/Issues.tsx` — full add+filter+list view. Route `/issues` registered in `App.tsx`. Nav link added in `Layout.tsx`.
+- Wired into existing pages:
+  - `Morning.tsx` — Mood&Factors compact after `01 Reflect`; Issues mini-section after `02 Braindump`.
+  - `Today.tsx` — compact factors card + today's issues between If-time and Done today.
+  - `Reflect.tsx` — full DailyFactorsCard + Issues add/list after daily reflection submit.
+  - `Review.tsx` — `WeeklyFactorsStrip` (Mon–Sun icon table) and `IssuesThisWeek` (this-week + carried-over) after Available project time.
+
+**Smoke test — all endpoints**
+- POST/GET/PATCH/DELETE for both `/api/issues` and `/api/daily-factors` returned HTTP 200 with correct shapes.
+- `GET /api/issues/this-week` returned `{mondayYmd: "2026-05-04", sundayYmd: "2026-05-10", thisWeek: [...], carriedOver: [...]}`.
+- Test data cleaned up after smoke test (issues 1+2 deleted; daily_factors row for 2026-05-08 nulled).
+- Regression: `GET /api/available-hours/this-week` still HTTP 200 — week 2026-W19, freeMinutes 2875, 19 deepWorkBlocks (unchanged from Feature 3 deploy).
+
+**Follow-ups**
+- Pre-existing TS errors still safe to ignore: `CalendarPlanner.tsx` 705/707, `routes.ts` 935/960 (`createdAt` missing — build still works).
+- Deferred bake-time fix for `AUPFHS_ICS_URL` / `ANCHOR_ICS_URL` (see 2026-05-08 16:20) still not folded in.
+- `FEATURES_TODO.md` has Feature 1 (travel time, STATIC) and Feature 2 (project values) waiting — explicitly DO NOT start without approval.
+
+---
+
 ## 2026-05-08 (17:13 AEST) — Feature 3 LIVE — publish unblocked
 
 **Deploy succeeded**

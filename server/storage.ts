@@ -17,6 +17,8 @@ import {
   projectPhases,
   projectComponents,
   projectTasks,
+  dailyFactors,
+  issues,
 } from "@shared/schema";
 import type {
   Task,
@@ -53,6 +55,10 @@ import type {
   InsertProjectComponent,
   ProjectTask,
   InsertProjectTask,
+  DailyFactors,
+  InsertDailyFactors,
+  Issue,
+  InsertIssue,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -311,6 +317,39 @@ CREATE TABLE IF NOT EXISTS project_tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_ptasks_project ON project_tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_ptasks_component ON project_tasks(component_id);
+
+-- Daily factors: mood + lightweight measures (one row per YYYY-MM-DD)
+CREATE TABLE IF NOT EXISTS daily_factors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL UNIQUE,
+  mood TEXT,
+  energy TEXT,
+  cognitive_load TEXT,
+  sleep_quality TEXT,
+  focus TEXT,
+  values_alignment TEXT,
+  captured_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_daily_factors_date ON daily_factors(date);
+
+-- Contextual life issues log
+CREATE TABLE IF NOT EXISTS issues (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_ymd TEXT NOT NULL,
+  category TEXT NOT NULL,
+  note TEXT,
+  need_support INTEGER NOT NULL DEFAULT 0,
+  support_type TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  resolved_ymd TEXT,
+  source_page TEXT NOT NULL DEFAULT 'reflect',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status);
+CREATE INDEX IF NOT EXISTS idx_issues_created_ymd ON issues(created_ymd);
+CREATE INDEX IF NOT EXISTS idx_issues_category ON issues(category);
 `);
 
 // Add new columns to existing tasks table if missing (idempotent)
@@ -967,6 +1006,81 @@ export class Storage {
       db.insert(habits).values({ ...h, createdAt: Date.now() }).run();
     }
     this.updateSettings({ habits_seeded: true });
+  }
+
+  // ----- Daily factors -----
+  getDailyFactors(date: string): DailyFactors | undefined {
+    return db.select().from(dailyFactors).where(eq(dailyFactors.date, date)).get();
+  }
+  upsertDailyFactors(
+    date: string,
+    patch: Partial<InsertDailyFactors>,
+  ): DailyFactors {
+    const now = Date.now();
+    const existing = this.getDailyFactors(date);
+    if (existing) {
+      db.update(dailyFactors)
+        .set({ ...patch, updatedAt: now })
+        .where(eq(dailyFactors.date, date))
+        .run();
+      return this.getDailyFactors(date)!;
+    }
+    return db
+      .insert(dailyFactors)
+      .values({
+        date,
+        mood: patch.mood ?? null,
+        energy: patch.energy ?? null,
+        cognitiveLoad: patch.cognitiveLoad ?? null,
+        sleepQuality: patch.sleepQuality ?? null,
+        focus: patch.focus ?? null,
+        valuesAlignment: patch.valuesAlignment ?? null,
+        capturedAt: now,
+        updatedAt: now,
+      })
+      .returning()
+      .get();
+  }
+  listDailyFactorsBetween(from: string, to: string): DailyFactors[] {
+    return db
+      .select()
+      .from(dailyFactors)
+      .where(and(gte(dailyFactors.date, from), lte(dailyFactors.date, to)))
+      .orderBy(dailyFactors.date)
+      .all();
+  }
+
+  // ----- Issues -----
+  listIssues(opts: { status?: string; from?: string; to?: string } = {}): Issue[] {
+    const conds: any[] = [];
+    if (opts.status) conds.push(eq(issues.status, opts.status));
+    if (opts.from) conds.push(gte(issues.createdYmd, opts.from));
+    if (opts.to) conds.push(lte(issues.createdYmd, opts.to));
+    const q = conds.length
+      ? db.select().from(issues).where(and(...conds))
+      : db.select().from(issues);
+    return q.orderBy(desc(issues.createdYmd), desc(issues.id)).all();
+  }
+  getIssue(id: number): Issue | undefined {
+    return db.select().from(issues).where(eq(issues.id, id)).get();
+  }
+  createIssue(input: InsertIssue): Issue {
+    const now = Date.now();
+    return db
+      .insert(issues)
+      .values({ ...input, createdAt: now, updatedAt: now })
+      .returning()
+      .get();
+  }
+  updateIssue(id: number, patch: Partial<Issue>): Issue | undefined {
+    db.update(issues)
+      .set({ ...patch, updatedAt: Date.now() })
+      .where(eq(issues.id, id))
+      .run();
+    return this.getIssue(id);
+  }
+  deleteIssue(id: number) {
+    db.delete(issues).where(eq(issues.id, id)).run();
   }
 }
 
