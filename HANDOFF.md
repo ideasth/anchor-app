@@ -15,6 +15,62 @@ If yes to any: add a one-line "framing miss" note to your session entry below. T
 
 ---
 
+## 2026-05-09 (08:58 AEST) — Morning page restructure: PUSHED, awaiting live publish
+
+**Status:** Code committed and pushed to `main` at commit `34329c3`. tsc clean, vitest 103/103. Build clean (new bundle `index-DLrH-Lqy.js`). **Live `https://anchor-jod.pplx.app` NOT updated** — `publish_website` is unavailable in this thread (known cached-capability bug, ticket 9a2f2c0a). Verified live `/api/available-hours/today` still returns SPA HTML, confirming the Node backend bundle hasn't been swapped.
+
+**Why.** User asked to restructure Morning page: add Morning habits (Calm focused breathing + Medication tickboxes), reorder Reflection (rename State → Arousal state with hypo/calm/hyper, add Mood + Cognitive load + Feeling of alignment yes/no, move grateful/freenotes/avoiding to bottom), and change This-week available-hours to Today's available-hours.
+
+**What was implemented (commit 34329c3, 6 files, +559 -137)**
+
+- `shared/schema.ts` — added 5 columns to `morning_routines`: `breathing_done`, `medication_done` (INTEGER NOT NULL DEFAULT 0), `mood`, `cognitive_load`, `alignment` (TEXT). Reused existing `state` text column for arousal state (UI options changed to hypo/calm/hyper; legacy values stay in historical rows).
+- `server/storage.ts` — 5 idempotent `ALTER TABLE` migrations (lines ~509-517).
+- `server/routes.ts` — extended PATCH `/api/morning/today` allowlist to accept the 5 new fields; new `GET /api/available-hours/today` endpoint.
+- `server/available-hours.ts` — new `computeAvailableHoursToday(events, transitByUid, now)` returning `{todayYmd, totalDayMinutes:1440, sleepMinutes:480, totalWakingMinutes:960, paidWorkMinutes, familyMinutes, otherCommittedMinutes, transitMinutes, freeMinutes, generatedAt}`. Transit = sum of `allowMinutes` from `resolveTravel()` per timed event today (same data as Leave-by labels).
+- `client/src/components/AvailableHoursTodayCard.tsx` (NEW, 93 lines) — compact "Time for me — today" card with 4-stat row (Paid work, Family, Transit, Other committed).
+- `client/src/pages/Morning.tsx` — full restructure: sticky header → Today's events (kept) → Top-paying project pill (kept) → Morning habits (NEW HabitRow checkboxes) → 01 Reflection (Arousal state chips, Energy 1-5, Sleep 1-5, Mood chips, Cognitive load chips, Alignment yes/no) → 02 Braindump (kept) → 03 Today's top 3 + Eligible + AvailableHoursTodayCard + Lock → 04 Life issues (renumbered) → Closing notes section at bottom (gratitude, free notes, avoiding) gated on `!express`. Removed `DailyFactorsCard` from Morning.tsx — Reflect page (separate route) still uses it.
+
+Section-completion logic unchanged: `reflectDone = !!energy && !!arousalState`, `braindumpComplete = braindumpRaw not empty`, `topDone = topThree.length >= 1`.
+
+**To publish (next thread):**
+
+```
+publish_website(
+  project_path="/home/user/workspace/anchor",
+  dist_path="/home/user/workspace/anchor/dist/public",
+  app_name="Anchor",
+  install_command="npm ci --omit=dev",
+  run_command="NODE_ENV=production node dist/index.cjs",
+  port=5000,
+  site_id="77eb73a0-40d8-4ae2-9a78-4239f106294b"
+)
+```
+
+Build recipe before publish:
+
+```bash
+cd /home/user/workspace/anchor
+SECRET=$(cat /home/user/workspace/.secrets/anchor_sync_secret)
+printf 'export const BAKED_SYNC_SECRET = "%s";\n' "$SECRET" > server/baked-secret.ts
+PPLX_KEY=$(cat /home/user/workspace/.secrets/perplexity_api_key)
+printf 'export const BAKED_PERPLEXITY_KEY = "%s";\n' "$PPLX_KEY" > server/baked-llm-keys.ts
+npm ci && npm run build
+```
+
+**Live verification (post-publish, run in fresh thread):**
+
+```bash
+SECRET=$(cat /home/user/workspace/.secrets/anchor_sync_secret)
+curl -fsS --max-time 15 -H "X-Anchor-Sync-Secret: $SECRET" \
+  https://anchor-jod.pplx.app/port/5000/api/available-hours/today | head -c 400
+```
+
+Expected: JSON `{todayYmd, totalDayMinutes, sleepMinutes, totalWakingMinutes, paidWorkMinutes, familyMinutes, otherCommittedMinutes, transitMinutes, freeMinutes, generatedAt}`. Currently returns SPA HTML — that's the signal the new bundle isn't deployed yet.
+
+**Framing miss:** none.
+
+---
+
 ## 2026-05-09 (01:45 AEST) — Admin ICS feeds: published-feeds sub-section DEPLOYED
 
 **Status:** Live on https://anchor-jod.pplx.app. tsc clean, vitest 103/103, 6 published-feed labels and the `cal-07ec8bc0` repo URL all confirmed baked into `Admin-CtVXxov1.js`. Live `/api/admin/health` still returns 2 upstream feeds.
