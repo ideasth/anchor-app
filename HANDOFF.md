@@ -4,6 +4,40 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (23:15 AEST) — Email-flag regression FIXED (server-side priority evaluator + backfill) DEPLOYED
+
+**Status:** Live on https://anchor-jod.pplx.app. Commit `1b3858d` on `main`. tsc clean, vitest 59/59 passing (37 new email-priority cases). Pre-commit hook fired. Security review clean (BLOCK 0, WARN 0).
+
+**Problem.** Audit on 2026-05-08 (23:00 entry, Item 5) found 5 of 6 most-recent priority emails stored with `isFlagged=0` despite criteria matching. Root cause: the 2026-05-08 cron edit that removed Outlook flag/importance filtering also dropped the `isFlagged=1` write path; the cron upserts rows but never sets the flag. Standing rule forbids modifying the cron without explicit approval.
+
+**Fix approach (user-approved option 1).** Move priority evaluation to the server. The cron's `isFlagged` value is now ignored; the server computes priority itself from `sender + subject + bodyPreview` on every upsert. This makes the cron's correctness irrelevant for the priority flag and gives a single source of truth.
+
+**What changed (commit `1b3858d`, 5 files, 525+/15-)**
+
+- `shared/email-priority.ts` (NEW) — canonical `evaluateEmailPriority()` plus `extractSenderEmail()`, `PRIORITY_DOMAINS`, `PRIORITY_SENDERS`, `PRIORITY_KEYWORDS`, `NO_REPLY_PATTERNS`. Dependency-free (works in node and vitest). Encodes CONTEXT.md criteria verbatim. **Adds `medicolegalassessmentsgroup.com.au` to `PRIORITY_DOMAINS`** so the active medicolegal booking from `medneg@…` (where the keyword only appears in the domain, not subject/body) flags correctly. No-reply rule matches local-part only (so `alerts@newsletter-host.com` is not falsely rejected). Domain rule supports subdomains via `endsWith('.' + target)`.
+- `server/routes.ts` — `POST /api/email-status/upsert` now calls `evaluateEmailPriority({sender, subject, bodyPreview})` and writes `isFlagged: isPriority ? 1 : 0`, **overriding** whatever the cron sent. Comment explains why.
+- `server/storage.ts` — new `recomputeAllEmailPriority()` (returns `{scanned, updated, flagged}`, only writes changed rows). Boot-time call wrapped in try/catch repairs existing rows on every server start.
+- `server/admin-db.ts` — new `POST /api/admin/email-priority-recompute` (user-cookie or sync-secret auth) for on-demand recompute.
+- `test/email-priority.test.ts` (NEW, 37 cases) — covers every domain in PRIORITY_DOMAINS, every sender, every keyword, no-reply rejection of `no-reply@epworth.org.au` even on a priority domain, the `newsletter-host.com` non-rejection corner case, malformed input, and CONTEXT.md sanity checks against the constants.
+
+**Smoke tests (live, post-publish)**
+
+- `GET /api/email-status?limit=20` → 6 rows, **all 6 with `isFlagged=1`** (was 0 of 6 pre-fix). The previously-missed `medneg@medicolegalassessmentsgroup.com.au` is now flagged via `domain:medicolegalassessmentsgroup.com.au`. ✓
+- `POST /api/admin/email-priority-recompute` → `{ok:true, scanned:6, updated:0, flagged:6}` (idempotent — backfill already ran at boot). ✓
+- `GET /api/admin/db/status` → 200, `exists:true, sizeBytes:512000` (data.db preserved across the publish). ✓
+- `npm run build` clean (typecheck + vite + esbuild). ✓
+- `npx vitest run` → 59/59 passing. ✓
+
+**Standing rules respected**: cron `c751741f` (Email Status pull) **untouched**. No data.db direct edit (the backfill goes through storage methods). No security re-review (subagent found nothing to fix). Secrets only read from `.secrets/`; baked-secret/baked-llm-keys gitignored. Outlook writes still gated. No Inbox page.
+
+**Notes / follow-ups**
+
+- The cron script (`cron_tracking/f04511c0/email_status_pull.py`) still has the broken flag-write path, but that is now harmless — its `isFlagged` value is ignored server-side. If the cron ever needs touching for another reason, the dead code can be removed at the same time. Not blocking.
+- The `lifestyle/EpworthChiefMedicalOfficer@epworth.org.au` row in CONTEXT.md's audit table is now correctly flagged via `domain:epworth.org.au` (no special handling needed; subdomain rule covers it).
+- `medicolegalassessmentsgroup.com.au` is a one-domain addition to CONTEXT.md's `PRIORITY_DOMAINS` list. CONTEXT.md text should be updated to reflect this on the next substantive doc pass; not done in this thread because CONTEXT.md is a Space-side file.
+
+---
+
 ## 2026-05-08 (23:00 AEST) — Batch: Quick Capture + deep-think badge + bundle split + tsc/husky + summary backfill + telemetry + backup receipt + plan-mode test suite DEPLOYED
 
 **Status:** Live on https://anchor-jod.pplx.app. Commit `a4c1c7b` on `main` (pushed via GitHub connector). Build clean. tsc clean. Vitest 22/22 passing.
