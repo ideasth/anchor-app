@@ -22,29 +22,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Fail if baked secret files are tracked
+        id: tracked-check
         run: |
           set -e
+          mkdir -p _ci-artifacts
+          : > _ci-artifacts/secret-check-tracked.txt
+          fail=0
           for path in server/baked-secret.ts server/baked-llm-keys.ts; do
             if git ls-files --error-unmatch "$path" > /dev/null 2>&1; then
-              echo "FAIL: $path is tracked in git. Baked secrets must never be committed."
-              exit 1
+              echo "FAIL: $path is tracked in git. Baked secrets must never be committed." | tee -a _ci-artifacts/secret-check-tracked.txt
+              fail=1
             fi
           done
+          if [ "$fail" = "1" ]; then exit 1; fi
           echo "OK: no baked secret files in the index."
       - name: Fail if any file looks like it contains a baked secret literal
+        id: literal-check
         # Cheap belt-and-braces grep for the BAKED_*_SECRET / BAKED_*_KEY
         # constant pattern with a non-placeholder value. Picks up renames,
         # copies, or accidental literal pastes elsewhere in the tree.
         run: |
           set -e
+          mkdir -p _ci-artifacts
+          : > _ci-artifacts/secret-check-literal.txt
           # Match BAKED_<UPPER>_<UPPER...> = "..." in any tracked file,
           # excluding tests, docs, and the SoT module names themselves
           # (which only declare the type, not the value).
-          if git grep -nE 'BAKED_[A-Z_]+\s*=\s*"[^"]+"' -- ':(exclude)test/' ':(exclude)*.md' | grep -v 'BAKED_SYNC_SECRET = "PLACEHOLDER"' | grep -v 'BAKED_PERPLEXITY_KEY = "PLACEHOLDER"'; then
-            echo "FAIL: a tracked file appears to contain a baked secret literal."
-            exit 1
+          # NOTE: artifact only contains filenames + line numbers (no values).
+          if git grep -nE 'BAKED_[A-Z_]+\s*=\s*"[^"]+"' -- ':(exclude)test/' ':(exclude)*.md' | grep -v 'BAKED_SYNC_SECRET = "PLACEHOLDER"' | grep -v 'BAKED_PERPLEXITY_KEY = "PLACEHOLDER"' | awk -F: '{print $1":"$2}' > _ci-artifacts/secret-check-literal.txt; then
+            if [ -s _ci-artifacts/secret-check-literal.txt ]; then
+              echo "FAIL: a tracked file appears to contain a baked secret literal. See artifact 'secret-check-debug' for filenames + line numbers (values are NOT included)."
+              cat _ci-artifacts/secret-check-literal.txt
+              exit 1
+            fi
           fi
           echo "OK: no baked secret literals in tracked files."
+      - name: Upload secret-check debug artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: secret-check-debug
+          path: _ci-artifacts/
+          retention-days: 14
+          if-no-files-found: ignore
 
   typecheck:
     name: tsc --noEmit
@@ -57,13 +77,20 @@ jobs:
           node-version: "20"
           cache: npm
       - run: npm ci
-      - name: Stub baked secrets so tsc can resolve them
+      - name: Stub baked secrets so tsc and the bundler can resolve them
         # baked-*.ts is gitignored and only generated at publish time.
-        # Stub them here with placeholder strings so type-checking succeeds.
+        # Stub them here with placeholder strings so type-checking and
+        # the production build both succeed in CI.
         run: |
           printf 'export const BAKED_SYNC_SECRET = "PLACEHOLDER";\n' > server/baked-secret.ts
           printf 'export const BAKED_PERPLEXITY_KEY = "PLACEHOLDER";\n' > server/baked-llm-keys.ts
       - run: npx tsc --noEmit
+      # `npm run build` catches a different class of error than tsc alone
+      # (e.g. circular imports, missing default exports in dynamic imports,
+      # vite/esbuild config drift). Adds ~30s; cheaper to fail here than
+      # mid-publish.
+      - name: npm run build
+        run: npm run build
 
   test:
     name: vitest

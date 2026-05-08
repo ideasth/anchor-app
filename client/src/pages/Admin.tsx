@@ -11,7 +11,17 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { queryClient } from "@/lib/queryClient";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
 import Usage from "@/pages/Usage";
 import SettingsPage from "@/pages/Settings";
@@ -98,6 +108,18 @@ export default function Admin() {
 
 // ----- Health dashboard (was the entire Admin page before consolidation) -----
 
+interface RecentErrorsResponse {
+  ringSize: number;
+  errors: Array<{
+    createdAt: number;
+    statusCode: number | null;
+    method: string | null;
+    path: string | null;
+    message: string;
+    stack: string | null;
+  }>;
+}
+
 interface HealthResponse {
   generatedAt: number;
   db: {
@@ -172,9 +194,109 @@ function fmtRelative(ms: number | null | undefined): string {
   return ` (${days}d ago)`;
 }
 
+function RecentErrorsCard() {
+  const q = useQuery<RecentErrorsResponse>({ queryKey: ["/api/admin/recent-errors"] });
+  const data = q.data;
+  const errors = data?.errors ?? [];
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-baseline justify-between gap-2 flex-wrap">
+          <span>Recent errors</span>
+          <span className="text-xs font-normal text-muted-foreground">
+            {q.isLoading
+              ? "loading…"
+              : `${errors.length} / ${data?.ringSize ?? 100} in ring`}
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="text-sm space-y-2">
+        <div className="text-xs text-muted-foreground">
+          In-memory ring of the last 100 server errors. Resets when the sandbox
+          restarts. No request bodies, headers, or query strings are recorded
+          — only method, path, status, message, and stack.
+        </div>
+        {errors.length === 0 ? (
+          <div className="text-xs italic text-muted-foreground">
+            {q.isError ? "Failed to load recent errors." : "No errors recorded since last restart."}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {errors.slice(0, 20).map((e, idx) => (
+              <details
+                key={`${e.createdAt}-${idx}`}
+                className="text-xs border rounded-md p-2 bg-muted/30"
+                data-testid={`recent-error-${idx}`}
+              >
+                <summary className="cursor-pointer flex items-baseline gap-2 flex-wrap">
+                  <span className="font-mono text-destructive">
+                    {e.statusCode ?? "?"}
+                  </span>
+                  <span className="font-mono">{e.method ?? ""}</span>
+                  <code className="truncate">{e.path ?? ""}</code>
+                  <span className="text-muted-foreground">
+                    {fmtAbs(e.createdAt)}
+                  </span>
+                </summary>
+                <div className="mt-2 space-y-1">
+                  <div className="font-medium">{e.message}</div>
+                  {e.stack && (
+                    <pre className="text-[10px] leading-tight whitespace-pre-wrap break-all bg-background p-2 rounded">
+                      {e.stack}
+                    </pre>
+                  )}
+                </div>
+              </details>
+            ))}
+            {errors.length > 20 && (
+              <div className="text-xs text-muted-foreground">
+                Showing 20 of {errors.length}. Hit{" "}
+                <code>/api/admin/recent-errors?limit=100</code> for more.
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function HealthDashboard() {
   const q = useQuery<HealthResponse>({ queryKey: ["/api/admin/health"] });
   const data = q.data;
+
+  // Telemetry kill-switch toggle: pending state for the confirm dialog and
+  // an in-flight flag so we can disable the buttons during the PATCH.
+  // The dialog only opens for the disable->enable->disable flip; reading
+  // is via /api/admin/health and writing via PATCH /api/settings (whitelist
+  // includes coach_telemetry_enabled).
+  const [telemetryDialogOpen, setTelemetryDialogOpen] = useState(false);
+  const [telemetryPatching, setTelemetryPatching] = useState(false);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
+  const telemetryEnabled = data?.coachTelemetryEnabled !== false; // undefined treated as enabled
+  const telemetryNextValue = !telemetryEnabled;
+
+  async function applyTelemetryToggle(nextValue: boolean) {
+    setTelemetryPatching(true);
+    setTelemetryError(null);
+    try {
+      const res = await apiRequest("PATCH", "/api/settings", {
+        coach_telemetry_enabled: nextValue,
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`PATCH /api/settings failed: ${res.status} ${text.slice(0, 200)}`);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["/api/admin/health"] });
+      setTelemetryDialogOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setTelemetryError(msg);
+    } finally {
+      setTelemetryPatching(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -333,24 +455,40 @@ function HealthDashboard() {
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-baseline justify-between gap-2 flex-wrap">
                 <span>Coach context usage (last 30 days)</span>
-                <span
-                  className={
-                    "text-xs font-normal " +
-                    (data.coachTelemetryEnabled === false
-                      ? "text-muted-foreground"
-                      : "text-emerald-500")
-                  }
-                >
-                  Telemetry: {data.coachTelemetryEnabled === false ? "disabled" : "enabled"}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={
+                      "text-xs font-normal " +
+                      (telemetryEnabled
+                        ? "text-emerald-500"
+                        : "text-muted-foreground")
+                    }
+                  >
+                    Telemetry: {telemetryEnabled ? "enabled" : "disabled"}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => {
+                      setTelemetryError(null);
+                      setTelemetryDialogOpen(true);
+                    }}
+                    disabled={telemetryPatching}
+                    data-testid="toggle-coach-telemetry"
+                  >
+                    {telemetryEnabled ? "Disable" : "Enable"}
+                  </Button>
+                </div>
               </CardTitle>
             </CardHeader>
             <CardContent className="text-sm space-y-1">
               <div className="text-xs text-muted-foreground mb-2">
                 Bundle keys the model actually referenced in plan/reflect responses.
                 Higher hits = the field is doing real work. Toggle the kill switch via
-                Settings (<code>coach_telemetry_enabled</code>). Retention sweeps run
-                daily at 04:30 server-local; default 90 days.
+                the button above (writes <code>coach_telemetry_enabled</code> to settings).
+                Retention sweeps run daily at 04:30 server-local; default 90 days.
               </div>
               {data.coachContextUsage && data.coachContextUsage.length > 0 ? (
                 data.coachContextUsage.map((row) => (
@@ -363,13 +501,61 @@ function HealthDashboard() {
                 ))
               ) : (
                 <div className="text-xs italic text-muted-foreground">
-                  {data.coachTelemetryEnabled === false
-                    ? "Disabled \u2014 no rows recorded."
-                    : "No rows yet. Telemetry rows appear after the next coach turn."}
+                  {telemetryEnabled
+                    ? "No rows yet. Telemetry rows appear after the next coach turn."
+                    : "Disabled \u2014 no rows recorded."}
                 </div>
               )}
             </CardContent>
           </Card>
+
+          <AlertDialog open={telemetryDialogOpen} onOpenChange={setTelemetryDialogOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {telemetryNextValue ? "Enable" : "Disable"} coach telemetry?
+                </AlertDialogTitle>
+                <AlertDialogDescription asChild>
+                  <div className="space-y-2 text-sm">
+                    <div>
+                      {telemetryNextValue
+                        ? "Recording of bundle-key hit counts will resume on the next coach turn."
+                        : "Recording stops immediately. Existing rows remain until the next 04:30 server-local sweep removes anything past the 90-day retention window."}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      This writes <code>coach_telemetry_enabled = {String(telemetryNextValue)}</code>{" "}
+                      via PATCH <code>/api/settings</code>. Reversible at any time.
+                    </div>
+                    {telemetryError && (
+                      <div className="text-xs text-destructive" data-testid="telemetry-toggle-error">
+                        {telemetryError}
+                      </div>
+                    )}
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={telemetryPatching}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={(e) => {
+                    // Prevent radix from auto-closing before the PATCH resolves.
+                    e.preventDefault();
+                    void applyTelemetryToggle(telemetryNextValue);
+                  }}
+                  disabled={telemetryPatching}
+                  data-testid="confirm-toggle-coach-telemetry"
+                >
+                  {telemetryPatching
+                    ? "Applying…"
+                    : telemetryNextValue
+                      ? "Enable telemetry"
+                      : "Disable telemetry"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          <RecentErrorsCard />
 
           <Card>
             <CardHeader className="pb-2">

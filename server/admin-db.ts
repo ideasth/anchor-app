@@ -14,6 +14,7 @@ import Database from "better-sqlite3";
 import { rawSqlite, storage } from "./storage";
 import { backfillCoachSessionSummaries } from "./coach-summary-backfill";
 import { runCoachTelemetrySweepNow } from "./coach-telemetry-sweeper";
+import { listErrors, clearErrors, ringSize } from "./error-buffer";
 
 // The cwd-relative path used by storage.ts (`new Database("data.db")`).
 const DB_PATH = path.resolve(process.cwd(), "data.db");
@@ -388,6 +389,28 @@ export function registerAdminDbRoutes(
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: "failed to record receipt", detail: msg.slice(0, 400) });
     }
+  });
+
+  // GET /api/admin/recent-errors
+  // Returns the in-memory error ring buffer (H-lite, no Sentry).
+  // Auth: user cookie OR sync secret. Limit query parameter caps result count.
+  app.get("/api/admin/recent-errors", (req, res) => {
+    const guard = requireUserOrOrchestrator ?? requireOrchestrator;
+    if (!guard(req, res)) return;
+    const rawLimit = typeof req.query.limit === "string" ? Number(req.query.limit) : NaN;
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : undefined;
+    res.json({
+      ringSize: ringSize(),
+      errors: listErrors(limit),
+    });
+  });
+
+  // POST /api/admin/recent-errors/clear
+  // Wipes the in-memory ring buffer. Sync-secret only (writes are stricter).
+  app.post("/api/admin/recent-errors/clear", (req, res) => {
+    if (!requireOrchestrator(req, res)) return;
+    const removed = clearErrors();
+    res.json({ ok: true, removed });
   });
 
   // POST /api/admin/email-priority-recompute

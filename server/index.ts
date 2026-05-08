@@ -7,6 +7,7 @@ import { registerAuthRoutes } from "./auth-routes";
 import { requireAuth } from "./auth";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
+import { recordError } from "./error-buffer";
 
 const app = express();
 const httpServer = createServer(app);
@@ -72,11 +73,24 @@ app.use((req, res, next) => {
 
   await registerRoutes(httpServer, app);
 
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
     console.error("Internal Server Error:", err);
+
+    // H-lite: capture into in-memory ring buffer for /api/admin/recent-errors.
+    // Best-effort; never throw out of the error handler.
+    try {
+      recordError({
+        err,
+        statusCode: status,
+        method: req.method,
+        path: req.originalUrl || req.url,
+      });
+    } catch {
+      // swallow — recordError must never break the response
+    }
 
     if (res.headersSent) {
       return next(err);
