@@ -6,6 +6,7 @@
 // straight from Review.
 
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import type { Issue } from "@shared/schema";
 import { IssueRow } from "./IssueRow";
 
@@ -20,7 +21,7 @@ export function IssuesThisWeek() {
   const q = useQuery<ThisWeekResponse>({
     queryKey: ["/api/issues/this-week"],
     queryFn: async () => {
-      const r = await fetch("/api/issues/this-week", { credentials: "include" });
+      const r = await apiRequest("GET", "/api/issues/this-week");
       return r.json();
     },
   });
@@ -28,7 +29,10 @@ export function IssuesThisWeek() {
   if (q.isLoading || !q.data) {
     return <div className="text-sm text-muted-foreground italic">Loading…</div>;
   }
-  const { thisWeek, carriedOver, mondayYmd, sundayYmd } = q.data;
+  const mondayYmd = q.data.mondayYmd ?? "";
+  const sundayYmd = q.data.sundayYmd ?? "";
+  const thisWeek = Array.isArray(q.data.thisWeek) ? q.data.thisWeek : [];
+  const carriedOver = Array.isArray(q.data.carriedOver) ? q.data.carriedOver : [];
   const all = [...carriedOver, ...thisWeek];
   if (all.length === 0) {
     return (

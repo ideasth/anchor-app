@@ -41,7 +41,7 @@ export function DailyFactorsCard({ variant = "full", date }: Props) {
   const q = useQuery<FactorsResponse>({
     queryKey: ["/api/daily-factors", ymd],
     queryFn: async () => {
-      const r = await fetch(`/api/daily-factors/${ymd}`, { credentials: "include" });
+      const r = await apiRequest("GET", `/api/daily-factors/${ymd}`);
       return r.json();
     },
   });

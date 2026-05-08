@@ -4,6 +4,28 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (19:38 AEST) — Feature 5 BUGFIX (NOT YET DEPLOYED) — raw fetch → apiRequest
+
+**Bug**
+- Live pages (Today/Reflect/Review/Issues) crashed with `TypeError: m.map is not a function` after the 17:55 deploy.
+- Root cause: 5 components added in Feature 5 used raw `fetch('/api/...')` in their `queryFn` instead of `apiRequest`. Raw `fetch` bypasses `__PORT_5000__` substitution — in production it hit `https://anchor-jod.pplx.app/api/...` (no such route, returns JSON 404) and the page parsed the 404 body as data, then `.map()` on an object crashed.
+- Webapp template explicitly warns against this: "NEVER use raw `fetch()`. Raw `fetch()` bypasses `__PORT_5000__` URL rewriting and API calls will 404 after deployment." My mistake.
+
+**Fix (committed locally, not yet on live)**
+- `client/src/components/IssueList.tsx`, `IssuesThisWeek.tsx`, `DailyFactorsCard.tsx`, `WeeklyFactorsStrip.tsx`, `client/src/pages/Issues.tsx` — all converted to `apiRequest("GET", url)` and added `Array.isArray()` defensive guards before `.map()`/`.filter()` / spread.
+- Mutations (`IssueQuickAdd`, `IssueRow`, `DailyFactorsCard`'s PATCH) were already using `apiRequest` and didn't need changes.
+- New built bundle: `index-R1tlKsA8.js` (920.82 kB) + `index-d-ACTGzM.css` (unchanged). Built clean.
+
+**Deploy blocked**
+- `publish_website` returned `{"error":"Website publishing is not enabled"}` — same gating regression as diagnostic ticket `9a2f2c0a-7c54-4eb2-a1df-cd53f7823aac`.
+- `deploy_website` succeeded but pushes to a different deployment URL (`https://www.perplexity.ai/computer/a/anchor-oliver-daly-HWSAYZTSST6ZF7IN70WMoA`) and does NOT update the `anchor-jod.pplx.app` subdomain bound to the original publish.
+- Live site at `https://anchor-jod.pplx.app/` is still serving the broken `index-BBkJT4Sl.js` bundle. Filed second diagnostic ticket `fb8d387e-6105-4575-b9fc-c12469fb96a9` earlier today for the same gating regression.
+- **In the meantime**: the broken pages remain broken on live. Use the deploy_website preview URL (above) for the fixed version, or wait for `publish_website` to come back so the fix can land at the canonical URL.
+
+**Files changed (this commit)** — 5 client files only. No schema, no routes, no server code.
+
+---
+
 ## 2026-05-08 (17:55 AEST) — Feature 5 LIVE — Mood/Factors + Issues Log
 
 **Deploy succeeded**

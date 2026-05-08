@@ -3,6 +3,7 @@
 // Used on the Review page to surface mood/factor patterns at a glance.
 
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import type { DailyFactors } from "@shared/schema";
 import { FACTOR_MEASURES, getFactorOption, type FactorKey } from "@/lib/factors";
 import { cn } from "@/lib/utils";
@@ -32,15 +33,18 @@ export function WeeklyFactorsStrip() {
   const q = useQuery<DailyFactors[]>({
     queryKey: ["/api/daily-factors", { from: fromYmd, to: toYmd }],
     queryFn: async () => {
-      const r = await fetch(`/api/daily-factors?from=${fromYmd}&to=${toYmd}`, {
-        credentials: "include",
-      });
-      return r.json();
+      const r = await apiRequest(
+        "GET",
+        `/api/daily-factors?from=${fromYmd}&to=${toYmd}`,
+      );
+      const data = await r.json();
+      return Array.isArray(data) ? data : [];
     },
   });
 
   const byDate = new Map<string, DailyFactors>();
-  for (const row of q.data ?? []) byDate.set(row.date, row);
+  const rows = Array.isArray(q.data) ? q.data : [];
+  for (const row of rows) byDate.set(row.date, row);
 
   const days: { ymd: string; label: string; row?: DailyFactors }[] = [];
   for (let i = 0; i < 7; i++) {

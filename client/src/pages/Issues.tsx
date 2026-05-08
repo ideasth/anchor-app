@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import type { Issue } from "@shared/schema";
 import { IssueRow } from "@/components/IssueRow";
 import { IssueQuickAdd } from "@/components/IssueQuickAdd";
@@ -25,21 +26,24 @@ export default function Issues() {
       const params = new URLSearchParams();
       if (statusFilter !== "all") params.set("status", statusFilter);
       const qs = params.toString();
-      const r = await fetch(qs ? `/api/issues?${qs}` : "/api/issues", {
-        credentials: "include",
-      });
-      return r.json();
+      const r = await apiRequest(
+        "GET",
+        qs ? `/api/issues?${qs}` : "/api/issues",
+      );
+      const data = await r.json();
+      return Array.isArray(data) ? data : [];
     },
   });
 
-  const items = (q.data ?? []).filter((i) =>
+  const allItems = Array.isArray(q.data) ? q.data : [];
+  const items = allItems.filter((i) =>
     categoryFilter === "all" ? true : i.category === categoryFilter,
   );
 
   const counts = {
-    open: (q.data ?? []).filter((i) => i.status === "open").length,
-    ongoing: (q.data ?? []).filter((i) => i.status === "ongoing").length,
-    resolved: (q.data ?? []).filter((i) => i.status === "resolved").length,
+    open: allItems.filter((i) => i.status === "open").length,
+    ongoing: allItems.filter((i) => i.status === "ongoing").length,
+    resolved: allItems.filter((i) => i.status === "resolved").length,
   };
 
   return (

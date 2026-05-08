@@ -1,6 +1,7 @@
 // IssueList — render a list of issues with optional empty/loading state.
 
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import type { Issue } from "@shared/schema";
 import { IssueRow } from "./IssueRow";
 
@@ -24,15 +25,16 @@ export function IssueList({ status, from, to, emptyText, showDate, compact }: Pr
   const q = useQuery<Issue[]>({
     queryKey: ["/api/issues", { status, from, to }],
     queryFn: async () => {
-      const r = await fetch(url, { credentials: "include" });
-      return r.json();
+      const r = await apiRequest("GET", url);
+      const data = await r.json();
+      return Array.isArray(data) ? data : [];
     },
   });
 
   if (q.isLoading) {
     return <div className="text-sm text-muted-foreground italic">Loading…</div>;
   }
-  const items = q.data ?? [];
+  const items = Array.isArray(q.data) ? q.data : [];
   if (items.length === 0) {
     return (
       <div className="text-sm text-muted-foreground italic rounded-lg border border-dashed p-4">
