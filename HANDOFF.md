@@ -4,6 +4,42 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (16:20 AEST) — AUPFHS calendar feed live; deferred bake-time fix
+
+**What changed**
+- AUPFHS Outlook publish ICS URL set on production via `PATCH /api/settings` (no rebuild required). URL now persists in `data.db.settings.aupfhs_ics_url`.
+- Verified working: `/api/calendar-events?days=14` returns events tagged `[Personal]` from the AUPFHS feed merged with the master ICS.
+- Calendar cache warm crons (`b4a58a27`, `2928f9fa`) will keep both feeds hot.
+
+**Recovery if data.db is ever wiped (cold-start scenario)**
+Re-run this PATCH to restore the AUPFHS feed:
+```bash
+SECRET=$(cat /home/user/workspace/.secrets/anchor_sync_secret)
+python3 - <<'PY'
+import json, pathlib
+url = pathlib.Path("/home/user/workspace/.secrets/aupfhs_ics_url").read_text().strip()
+pathlib.Path("/tmp/p.json").write_text(json.dumps({"aupfhs_ics_url": url}))
+PY
+curl -sS -X PATCH -H "Content-Type: application/json" -H "X-Anchor-Sync-Secret: $SECRET" \
+  --data-binary @/tmp/p.json https://anchor-jod.pplx.app/port/5000/api/settings
+rm -f /tmp/p.json
+```
+
+**Deferred — bake-time fix (do this on the next substantial Anchor rebuild)**
+The `process.env.AUPFHS_ICS_URL` reference in `server/storage.ts:335` is dead code in production (publish_website doesn't pass arbitrary env vars). When a substantial source-code change requires a full rebuild + republish, fold in:
+1. Add `server/baked-aupfhs-ics-url.ts` to `.gitignore` (mirrors `baked-secret.ts` pattern)
+2. Generate it at build time:
+   ```bash
+   ICS_URL=$(cat /home/user/workspace/.secrets/aupfhs_ics_url)
+   printf 'export const BAKED_AUPFHS_ICS_URL = "%s";\n' "$ICS_URL" > server/baked-aupfhs-ics-url.ts
+   ```
+3. In `server/storage.ts:335`, replace `process.env.AUPFHS_ICS_URL ?? ""` with `BAKED_AUPFHS_ICS_URL` from `./baked-aupfhs-ics-url`. Same change for `ANCHOR_ICS_URL` on line 330 (use `BAKED_ANCHOR_ICS_URL` from `.secrets/anchor_ics_url`).
+4. After build, the boot-time backfill at `storage.ts:364-368` will seed `data.db` automatically on a fresh deploy — no PATCH needed for cold starts.
+
+Why deferred: today's rebuild risk doesn't justify the gain. Current `data.db` has the URL; weekly snapshots back it up. The PATCH is a one-liner if a cold start ever happens.
+
+---
+
 ## 2026-05-08 (12:55 AEST) — Repo public; admin endpoints rebuilt; `publish_website` STILL gated
 
 **Completed**
