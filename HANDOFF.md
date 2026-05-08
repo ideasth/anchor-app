@@ -15,6 +15,47 @@ If yes to any: add a one-line "framing miss" note to your session entry below. T
 
 ---
 
+## 2026-05-09 (00:15 AEST) — Revised batch (A, B+D-merge, C-Opt3, E, H-lite) DEPLOYED
+
+**Status:** Live on https://anchor-jod.pplx.app. Commits `0de5254` on `main`. tsc clean, vitest 81/81 (was 59; +13 cron-inventory, +9 error-buffer). Pre-commit hook fired. Two cron task body updates applied via schedule_cron action=update with explicit user approval.
+
+**Approval flow.** User picked A, B, C, D, E, H from a recommendations list; I pushed back on D (skipped local pre-commit `npm run build` as too slow) and proposed merging it into B's CI typecheck job, and on H (skipped Sentry, proposed in-memory ring buffer "H-lite"). User approved revised set. Both cron updates were sent for explicit per-cron approval before applying — standing rule respected.
+
+**What was implemented**
+
+- **A — Backup-receipt loop wiring (cron updates).**
+  - Cron `8e8b7bb5` task body: appended a new step 4 that POSTs `{onedriveUrl, mtime, sizeBytes, note}` to `/api/admin/backup-receipt` with the sync-secret header. Step 4 is non-blocking on failure: backup is preserved, low-severity 'Anchor backup OK but receipt POST failed' notification fires, run continues to step 5. ONEDRIVE_URL guard skips the POST if step 3 fell through. Old steps 4-5 renumbered to 5-6.
+  - Cron `d08f13f1` task body: parser updated from non-existent `lastReceipt.snapshotDate` to `lastReceipt.mtime` (with `createdAt` fallback when mtime is null). Schema-aligned with `latestBackupReceipt()` in `server/storage.ts`. Notification bodies now log mtime/createdAt as ISO 8601 UTC, sizeBytes, and onedriveUrl.
+
+- **B + D-merge — CI hardening.** `.github/workflows/ci.yml`:
+  - Secret-check job now writes filenames + line numbers (NEVER values) to `_ci-artifacts/` and uploads via `actions/upload-artifact@v4` (14-day retention) on failure. Caller can grep the artifact instead of re-running CI to debug.
+  - Typecheck job now runs `npm run build` after `tsc --noEmit` to catch bundler errors that tsc misses (circular imports, missing default exports in dynamic imports, vite/esbuild config drift). Adds ~30s to CI; cheaper than a mid-publish failure.
+  - **Local pre-commit unchanged** (kept fast for tight commit loops). The CI build is the safety net.
+
+- **C (Option 3) — Cron inventory drift test.** New `shared/cron-inventory.ts` is the canonical source for the 9 retune candidates with `currentCron` + `aedtCron` per entry, plus `renderAedtRetuneList()` that produces the markdown bullets used in cron `236aa4a4`'s reminder body. New `test/cron-inventory.test.ts` (13 cases) asserts: (a) the list contains exactly the 9 known IDs and not 236aa4a4 itself, (b) every entry's AEDT hours equal current hours minus 1 modulo 24, (c) minute/dom/month/dow are byte-identical between current and AEDT, (d) `parseHourField` rejects ranges/steps. Next time `236aa4a4` body is touched, regenerate the bullet list with `renderAedtRetuneList()` instead of hand-editing.
+
+- **E — Telemetry kill switch toggle in Admin UI.** Existing badge ("Telemetry: enabled/disabled") now sits next to a Disable/Enable button in the coach context usage card. Click opens an `AlertDialog` describing the consequence (immediate stop on disable, recording resumes on enable, reversible) and the value being written. Confirm fires `apiRequest("PATCH", "/api/settings", { coach_telemetry_enabled: <bool> })`, invalidates `/api/admin/health` query, and closes the dialog. Error path renders inline; in-flight state disables both confirm and cancel.
+
+- **H-lite — In-memory error ring buffer.** New `server/error-buffer.ts`: 100-entry ring with `recordError`, `listErrors(limit?)`, `clearErrors()`. **Privacy choices**: querystring stripped from path; no headers, body, or query data recorded; messages clipped to 500 chars; stacks clipped to 2000 chars. Wired into the existing express error middleware in `server/index.ts` inside a try/catch so it can never break the response. New endpoints in `server/admin-db.ts`: `GET /api/admin/recent-errors` (cookie OR sync-secret) and `POST /api/admin/recent-errors/clear` (sync-secret only). New Admin UI card `RecentErrorsCard` renders most-recent errors as collapsible `<details>` blocks with statuscode + method + path summary, plus the error message and stack on expand. New `test/error-buffer.test.ts` (9 cases) covers shape, querystring stripping, ordering, ring cap, limit clamp, truncation, clear, non-Error inputs.
+
+**Smoke tests (live, post-publish)**
+
+- `GET /api/admin/recent-errors` → `{ringSize: 100, errors: []}`. ✓
+- `POST /api/admin/recent-errors/clear` → `{ok: true, removed: 0}`. ✓
+- `POST /api/admin/backup-receipt` with `{onedriveUrl, mtime: <unix-now>, sizeBytes: 512000, note: "smoke test 2026-05-09"}` → `{ok: true, id: 2, createdAt: <ms>}`. ✓ Confirms the patched cron 8e8b7bb5 payload shape works against the live endpoint.
+- `GET /api/admin/health` → `coachTelemetryEnabled: true`, `lastReceipt` populated with the smoke receipt (`mtime` is finite, ~30 minutes old, well within 8-day window). ✓ Cron `d08f13f1` running tonight at 18:00 AEST will see this receipt and notify "verified" rather than "NOT populated" — proves the parser fix end-to-end.
+
+**Standing rules respected**: cron `c751741f` and the seven other AEDT-affected crons untouched. Cron `8e8b7bb5` and `d08f13f1` were updated **only after explicit approval** — both bodies presented to the user verbatim, then patched via `schedule_cron action=update`. No data.db direct edits. No security re-review. Secrets only read from `.secrets/`; baked-secret/baked-llm-keys gitignored. Outlook writes still gated. No Inbox page.
+
+**Outstanding follow-ups**
+
+- A smoke-test backup receipt row exists in production data.db (id=2, note="smoke test 2026-05-09 (replaces stale)"). It is benign — `latestBackupReceipt()` returns the most recent row, which will be replaced by tomorrow's real backup. Cleanup not required; leaves an audit trail of the H-lite/A wiring proof.
+- Cron `8e8b7bb5` runs Sun 10 May 03:00 AEST (i.e. tonight UTC). First real receipt POST will happen then. If the OneDrive upload step has a connector quirk that produces an empty ONEDRIVE_URL, the cron will skip the POST silently and the backup itself still succeeds; cron `d08f13f1` next Saturday (16 May) will then surface "stale" rather than success. That's the intended fail-loud behaviour.
+- D08f13f1 also fires Sat 9 May 18:00 AEST (today). Expected outcome: "Anchor backup-receipt loop verified" notification with the smoke-test receipt details. If it instead fires "NOT populated" or "stale", the parser fix didn't take — investigate.
+- H-lite ring is in-memory only; it resets on every sandbox restart. Acceptable for a single-user app. If errors ever need to survive a restart, add a `error_log` SQLite table and swap the buffer for a writer (≤30 lines).
+
+---
+
 ## 2026-05-08 (23:35 AEST) — Recommendations batch (1, 4, 6, 7, 8, 10) DEPLOYED
 
 **Status:** Live on https://anchor-jod.pplx.app. Commit `049f9c0` on `main` (rebased onto `bac01ce`). tsc clean, vitest 22/22 passing. Pre-commit hook fired. Two new date-guarded crons created. CI workflow added.
