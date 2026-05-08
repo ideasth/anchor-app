@@ -4,6 +4,71 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (23:00 AEST) — Batch: Quick Capture + deep-think badge + bundle split + tsc/husky + summary backfill + telemetry + backup receipt + plan-mode test suite DEPLOYED
+
+**Status:** Live on https://anchor-jod.pplx.app. Commit `a4c1c7b` on `main` (pushed via GitHub connector). Build clean. tsc clean. Vitest 22/22 passing.
+
+**Items implemented (numbered per user's batch request)**
+
+1. **Item 2 — Quick Capture (option B):** new `client/src/components/QuickCaptureModal.tsx` plus a Cmd/Ctrl+K hotkey wired in `Layout.tsx`. Opens a modal with text + domain + estimate + commit-or-defer. The sidebar "Quick capture" entry now opens this modal rather than navigating to `/capture`.
+2. **Item 3 — Deep-think state surfaced:** Coach session rail and search-hit list now show a deep-think badge whenever the persisted session row has the deep-think flag.
+3. **Item 4 — Backup receipt:** new `backup_receipts` table; storage methods `recordBackupReceipt` + `latestBackupReceipt`; new `POST /api/admin/backup-receipt` (sync-secret only) in `server/admin-db.ts`; `backups.lastReceipt` field added to `/api/admin/health`; new "Last OneDrive backup" sub-section in the Admin Local backups card. **Cron 8e8b7bb5's task body has NOT been updated** to POST the receipt yet — see follow-ups.
+4. **Item 5 — Email priority cron sanity-check (read-only audit):** fetched `/api/email-status?limit=50`, re-applied criteria locally. **Finding: 5 of 6 most-recent emails meet criteria but were stored with `isFlagged=0`.** All 6 received in a 4-hour window 2026-05-07 04–07Z, all `updatedAt` ~06:16Z (cron ran but flag write path is broken). Likely regression from the 2026-05-08 cron edit that removed Outlook flag/importance filtering. Audit report saved to `EMAIL_PRIORITY_AUDIT_2026-05-08.md`. Edge case: `medneg@medicolegalassessmentsgroup.com.au` not flagged because "medicolegal" only appears in the domain, not subject/body — candidate for `PRIORITY_DOMAINS`. Did not modify the cron.
+5. **Item 6 — Backfill coach session summaries:** new `server/coach-summary-backfill.ts` with `scheduleCoachSummaryBackfill()` that runs 5s after server boot, finds ENDED sessions with NULL summary (via new `storage.listCoachSessionsNeedingSummary`), summarises sequentially with 1.5s delay between calls. Wired into `registerCoachRoutes`.
+6. **Item 7 — Bundle split:** `client/src/App.tsx` switched to `lazy()`+`Suspense` for Coach, CalendarPlanner, Admin, Settings, Usage. Resulting chunks: index 483 kB / Usage 405 kB / CalendarPlanner 52 kB / Coach 22 kB / Settings 14 kB / Admin 14 kB.
+7. **Item 8 — `tsc --noEmit`:** the build script now runs `npx tsc --noEmit` before vite/esbuild and fails fast on type errors.
+8. **Item 10 — Coach context-bundle telemetry:** new `server/coach-context-telemetry.ts` does substring-scan of bundle string values against assistant text (`detectReferencedBundleKeys`). New `coach_context_usage` table. Storage methods `recordCoachContextUsage` + `summariseCoachContextUsage`. Wired into the turn endpoint after the assistant message is persisted, wrapped in try/catch (telemetry must never break a turn). Surfaced as `coachContextUsage` (top 10 keys, last 30 days) in `/api/admin/health` and as a card in Admin.
+9. **Item 11 — Plan-mode regression suite (vitest, fixture-based, mocked LLM):** new `shared/anchor-action.ts` is now the single source of truth for `extractAnchorActions`, `stripAnchorActions`, `validateAnchorAction`, and the action types. Coach.tsx imports from `@shared/anchor-action`. New `test/anchor-action.test.ts` with 22 fixture-based tests (extraction, stripping, validation, kind discriminator, malformed payloads). New `vitest.config.ts`. tsconfig includes `test/**/*` with `vitest/globals` types. `.husky/pre-commit` now runs tsc, then `npx vitest run --reporter=dot`, then blocks commits that include any `server/baked-*.ts`. `package.json` gained `test` and `test:watch` scripts.
+
+**Build / publish guardrail discovered this session:** the husky devDep is excluded by `npm ci --omit=dev` in the published sandbox, but the `prepare` script still runs and fails (`sh: 1: husky: not found`, exit 127). Fixed by changing `prepare` to `husky || true` in `package.json`. This survives without devDeps in production while still installing the local hooks during dev.
+
+**Smoke tests (live, post-publish)**
+- `/api/admin/health` returns 200 with new keys present: `backups.lastReceipt` (currently `null`, expected until cron 8e8b7bb5 is updated), `coachContextUsage` (currently `[]`, expected until coach turns produce telemetry rows). ✓
+- Build output shows the lazy chunks. ✓
+- Pre-commit hook fired before `a4c1c7b`: tsc clean + 22/22 vitest passing. ✓
+
+**Files modified (commit `a4c1c7b`, 18 files, 2046+/53−)**
+- `package.json`, `package-lock.json` — husky, lint-staged, vitest devDeps; `test`/`test:watch` scripts; `prepare` guarded
+- `.husky/pre-commit` (NEW) — baked-secret check, tsc, vitest
+- `client/src/App.tsx` — lazy() + Suspense for 5 routes
+- `client/src/components/Layout.tsx` — QuickCaptureModal + Cmd/Ctrl+K hotkey
+- `client/src/components/QuickCaptureModal.tsx` (NEW)
+- `client/src/pages/Admin.tsx` — "Last OneDrive backup" sub-section, Coach context usage card
+- `client/src/pages/Coach.tsx` — deep-think badge in rail + search hits; refactored to import from `@shared/anchor-action`; slot type narrowing fix
+- `server/admin-db.ts` — `lastReceipt` + `coachContextUsage` in `/api/admin/health`; new `POST /api/admin/backup-receipt`
+- `server/coach-routes.ts` — wires summary backfill + telemetry capture
+- `server/coach-summary-backfill.ts` (NEW)
+- `server/coach-context-telemetry.ts` (NEW)
+- `server/storage.ts` — new tables (`coach_context_usage`, `backup_receipts`) + methods
+- `shared/anchor-action.ts` (NEW)
+- `test/anchor-action.test.ts` (NEW, 22 tests)
+- `vitest.config.ts` (NEW)
+- `tsconfig.json` — include test/, vitest/globals types
+- `EMAIL_PRIORITY_AUDIT_2026-05-08.md` (NEW)
+
+**Follow-ups (need user approval before doing)**
+
+1. **Cron `8e8b7bb5` task body update — task-body only, NOT a schedule retune.** The backup-receipt feature is wired server-side but the cron does not yet POST after the OneDrive upload. Proposed patch: add a single curl POST after step 3 (OneDrive upload), e.g.
+   ```bash
+   SHA256=$(sha256sum "$OUT" | awk '{print $1}')
+   SIZE=$(stat -c%s "$OUT")
+   curl -fsS --max-time 30 \
+     -H "X-Anchor-Sync-Secret: $SECRET" \
+     -H "Content-Type: application/json" \
+     -X POST \
+     --data-binary "{\"onedriveUrl\":\"$ONEDRIVE_URL\",\"sha256\":\"$SHA256\",\"sizeBytes\":$SIZE,\"snapshotDate\":\"$STAMP\"}" \
+     https://anchor-jod.pplx.app/port/5000/api/admin/backup-receipt
+   ```
+   Standing rule says do not modify any cron without explicit approval. Awaiting yes/no.
+
+2. **Email Status flag-write regression** (Item 5 audit). The cron is firing on schedule but not setting `isFlagged=1` despite criteria matching 5 of the 6 most recent rows. Inspect `cron_tracking/f04511c0/email_status_pull.py` — specifically the criteria-eval branch that writes `isFlagged` — in a fresh thread before re-tuning the cron. Edge case: consider adding `medicolegalassessmentsgroup.com.au` to `PRIORITY_DOMAINS`.
+
+3. **DST cutover Sun 5 Oct 2026** — cron 8e8b7bb5 backup needs retune from `0 17 * * 6` to `0 16 * * 6` to stay at 03:00 Melbourne local. Self-reminder is in the cron task body; do not auto-retune.
+
+**Standing rules respected**: no cron schedule changes, no `data.db` edits, no security re-review, secrets only read from `.secrets/` and never logged or committed, Outlook writes still gated, no Inbox page (rationale persisted in Space `CONTEXT.md`).
+
+---
+
 ## 2026-05-08 (22:25 AEST) — Sidebar reorder + Admin consolidation + Settings fix DEPLOYED
 
 **Status:** Live on https://anchor-jod.pplx.app, bundle `index-CuxQmtbn.js`. Commit `2357416` on `main`. tsc clean (pre-build hook).
