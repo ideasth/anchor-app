@@ -38,6 +38,8 @@ The `process.env.AUPFHS_ICS_URL` reference in `server/storage.ts:335` is dead co
 
 Why deferred: today's rebuild risk doesn't justify the gain. Current `data.db` has the URL; weekly snapshots back it up. The PATCH is a one-liner if a cold start ever happens.
 
+**Note for non-owner readers**: the recovery snippet above assumes the operator has the canonical `/home/user/workspace/.secrets/aupfhs_ics_url` and `anchor_ics_url` files in their sandbox — these are the owner's iCloud + Outlook calendar share URLs and are NOT in this repo (intentionally, since the repo is public). If you're a future maintainer without owner access, you cannot run the recovery as written; you'd need the owner to either supply the URLs or run the PATCH themselves.
+
 ---
 
 ## 2026-05-08 (12:55 AEST) — Repo public; admin endpoints rebuilt; `publish_website` STILL gated
