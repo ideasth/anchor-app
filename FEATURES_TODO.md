@@ -1,10 +1,10 @@
 # Features TODO — pending implementation
 
-Status snapshot: 2026-05-08, after Feature 3 (available hours this week) source landed but publish_website is still gated.
+Status snapshot: 2026-05-08 (21:25 AEST). Features 1, 2, 3 and 5 DEPLOYED to https://anchor-jod.pplx.app. Feature 4 deferred.
 
 ---
 
-## Feature 1 — Pre-event travel time (STATIC defaults)
+## Feature 1 — Pre-event travel time (STATIC defaults)  —  **DONE 2026-05-08**
 
 **Approach:** Static lookup table per location. No traffic API calls. User can override per event.
 
@@ -142,7 +142,7 @@ Then ask ONE focused question, e.g.:
 
 ---
 
-## Feature 5 — Life coach page (full dialogue, two modes, persistent + auto-summarised)
+## Feature 5 — Life coach page (full dialogue, two modes, persistent + auto-summarised)  —  **DONE 2026-05-08**
 
 **Status:** Designed 2026-05-08, NOT started. Do NOT implement without explicit approval.
 

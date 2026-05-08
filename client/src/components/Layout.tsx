@@ -17,6 +17,7 @@ const NAV = [
   { href: "/calendar-planner", label: "Calendar" },
   { href: "/habits", label: "Habits" },
   { href: "/reflect", label: "Reflect" },
+  { href: "/coach", label: "Coach" },
   { href: "/review", label: "Review" },
   { href: "/issues", label: "Issues" },
   { href: "/usage", label: "Usage" },

@@ -4,6 +4,68 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (21:30 AEST) — Feature 5 DEPLOYED — Coach page (Sonar plan + reflect, persistent + auto-summarised)
+
+**Status:** Live on https://anchor-jod.pplx.app, bundle `index-BMs2zHHC.js`. Standing rule respected: skipped security review. No cron changes. No data.db edits beyond additive `coach_sessions` + `coach_messages` migrations done in Feature 5 schema phase. Both modes smoke-tested live. Plan-mode latency ~22s (sonar-reasoning-pro), reflect-mode ~1.5s (sonar-pro).
+
+**Backend additions**
+- `server/baked-llm-keys.ts` (gitignored) — baked Perplexity key for AUPFHS org account. Read at boot via `BAKED_PERPLEXITY_KEY` constant; environment override `PERPLEXITY_API_KEY` honoured first.
+- `server/llm/adapter.ts` (NEW) — provider-agnostic `LLMAdapter` interface with `streamChat()` and `complete()`. Includes `disableSearch?: boolean` on `StreamRequest` for Sonar grounding control.
+- `server/llm/perplexity.ts` (NEW) — `PerplexityAdapter` calling `https://api.perplexity.ai/chat/completions`. Both streaming SSE parser (`parseSSE`) and non-streaming `complete()` paths. `buildBody()` honours `disable_search: true` when requested.
+- `server/coach-context.ts` (NEW) — `buildCoachContextBundle()` produces a JSON snapshot (today YMD, recent daily factors, today's top-3, yesterday unfinished, open issues, available hours this week, weather hook). `bundleForModel()` strips `availableHoursDetail` and trims daily factors to last 3 to keep system prompt < ~3KB. `detectCrisisLanguage()` matches 10 patterns (suicidal ideation, self-harm, hopelessness keywords) and returns canned `CRISIS_RESPONSE` (Lifeline 13 11 14, 000, GP, Marieke, Beyond Blue 1300 22 4636). System prompts: `COMMON_PREAMBLE` + `PLAN_MODE_INSTRUCTIONS` + `REFLECT_MODE_INSTRUCTIONS`. **`buildSystemMessages()` returns ONE combined system message** — sonar-reasoning-pro otherwise treats a separate context-bundle system row as something to ignore in favour of (now-disabled) web search.
+- `server/coach-routes.ts` (NEW) — 8 endpoints registered via `registerCoachRoutes({app, requireUserOrOrchestrator, getMergedPlannerEvents, computeAvailableHoursThisWeek})`:
+  - `GET /api/coach/health` — `{available, provider, models:{plan, reflect}}`
+  - `GET /api/coach/sessions?limit=N` — list recent sessions
+  - `GET /api/coach/sessions/:id` — full detail (messages + summary + bundle)
+  - `POST /api/coach/sessions` — start session, returns `{session, bundle}`
+  - `PATCH /api/coach/sessions/:id` — mode/linked-issue update
+  - `DELETE /api/coach/sessions/:id` — hard delete (cascade)
+  - `POST /api/coach/sessions/:id/turn` — send user msg; SSE-stream assistant reply
+  - `POST /api/coach/sessions/:id/end` — end + generate summary
+  - `PATCH /api/coach/sessions/:id/summary` — user-edit summary (sets `summaryEditedByUser=1`)
+- `server/routes.ts` — wired `registerCoachRoutes` import + call right before `return httpServer`.
+
+**Critical implementation notes (do NOT regress)**
+1. **`/turn` is non-streaming**, not SSE-streaming. Published-sandbox proxy buffers upstream Sonar SSE chunks and the connection hangs forever. Implementation: `await llm.complete(...)` then emit full text as a single `event: delta` followed by `event: done`. Wire format kept SSE so the React client and a future true-streaming upgrade need no client changes. Crisis path is purely synchronous `res.write` so it's unaffected.
+2. **Always-persist-assistant pattern.** `req.on('close')` fires under HTTP/2 over Cloudflare even on normal completion, setting `aborted=true`. The assistant message is appended to storage **before** any `if (!res.writableEnded)` check, so transcripts never lose a turn even if the SSE write fails.
+3. **`<think>...</think>` strip.** sonar-reasoning-pro emits a reasoning preamble in `<think>` tags before the actual answer. Per Perplexity docs, `response_format` does NOT remove these. `stripThinkTags()` in `coach-routes.ts` strips them with regex `/<think>[\s\S]*?<\/think>\s*/gi` from BOTH the turn output and the end-summary output before persisting and emitting.
+4. **`disable_search: true` on every coach request.** The coach is grounded in the supplied bundle, not the open web. Without this flag, sonar-reasoning-pro performed real web searches and used the search results in lieu of (or in addition to) the system context. Applied for plan, reflect, AND summary calls.
+5. **Models.** plan → `sonar-reasoning-pro`, reflect → `sonar-pro`, summary → `sonar-pro`. Defined in `coach-context.ts` (`modelForMode()`, `SUMMARY_MODEL`).
+6. **Crisis terms** trigger `CRISIS_RESPONSE` immediately; the LLM is not called and no `<think>` strip is needed there. Verified working.
+
+**UI additions**
+- `client/src/pages/Coach.tsx` (NEW, 729 lines) — mode toggle (plan/reflect), SSE consumption via `fetch` with `getReader()` (handles `: ping`, `event: delta`, `event: done`, `event: error`, `event: crisis`), context rail showing today's bundle, summary editor modal, delete-session button with confirm, crisis card display, anchor-action confirm UI for `top3_candidate` (PUT /api/top-three) and `issue_patch` (PATCH /api/issues/:id) blocks the model emits.
+- `client/src/App.tsx` — added Coach route at `/coach`.
+- `client/src/components/Layout.tsx` — added Coach nav between Reflect and Review.
+- `client/src/lib/queryClient.ts` — exported `buildApiUrl(path)` and `buildAuthHeaders(extra)` for SSE fetch.
+
+**Smoke tests (live)**
+- `GET /api/coach/health` → `{available:true, provider:"perplexity", models:{plan:"sonar-reasoning-pro", reflect:"sonar-pro"}}`
+- Plan turn: `"What should my top 3 today be?"` → `"No open tasks to rank. You're 9 hours into the evening in couple time, with Marieke's physio at 10. Looking to plan tomorrow or next week instead?"` (22s, grounded in context bundle, no `<think>` leakage, no web search noise).
+- Reflect turn: `"I am tired. Just say hi briefly."` → `"Hi Justin. Tired sounds heavy today."` (1.5s, single Socratic line as designed).
+- End/summary on reflect session → returns updated session with summary in 2.1s.
+- Test sessions deleted after smoke test.
+
+**Build recipe (CRITICAL)**
+```
+cd /home/user/workspace/anchor
+SECRET=$(cat /home/user/workspace/.secrets/anchor_sync_secret)
+printf 'export const BAKED_SYNC_SECRET = "%s";\n' "$SECRET" > server/baked-secret.ts
+PPLX_KEY=$(cat /home/user/workspace/.secrets/perplexity_api_key)
+printf 'export const BAKED_PERPLEXITY_KEY = "%s";\n' "$PPLX_KEY" > server/baked-llm-keys.ts
+npm ci && npm run build
+```
+Both `server/baked-secret.ts` AND `server/baked-llm-keys.ts` must be regenerated before each build. Both gitignored.
+
+**Pre-existing TS errors safe to ignore (5):** CalendarPlanner.tsx 733/735 (downlevelIteration), routes.ts 1196/1221 (createdAt missing on projects/components/tasks). Build still emits successfully.
+
+**Follow-ups (none blocking, all optional)**
+- Plan-mode latency is 20s+ due to sonar-reasoning-pro. If this feels too slow in daily use, consider switching plan mode to `sonar-pro` (drops `<think>` reasoning, faster).
+- Coach.tsx is large (729 lines) — could be split into `Coach/MessageList`, `Coach/ContextRail`, `Coach/SummaryModal` if it grows further.
+- Future: Anthropic adapter as v2. Adapter interface already in place in `server/llm/adapter.ts`.
+
+---
+
 ## 2026-05-08 (20:15 AEST) — Feature 2 DEPLOYED — Project values (income + benefit + kudos)
 
 **Status:** Live on https://anchor-jod.pplx.app, bundle `index-CgmvfR1g.js`. Standing rule respected: skipped security review. No cron changes. No data.db edits beyond additive `ALTER TABLE` migrations.

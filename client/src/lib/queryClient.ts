@@ -1,6 +1,16 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+
+// Exposed so streaming endpoints (e.g. /api/coach/sessions/:id/turn) can
+// build full URLs with auth-query the same way apiRequest does.
+export function buildApiUrl(path: string): string {
+  return `${API_BASE}${withAuthQuery(path)}`;
+}
+
+export function buildAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  return buildHeaders(extra);
+}
 const TOKEN_KEY = "anchor_token";
 
 export function getStoredToken(): string | null {

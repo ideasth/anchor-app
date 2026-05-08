@@ -13,6 +13,7 @@ import Priorities from "@/pages/Priorities";
 import HabitsPage from "@/pages/Habits";
 import Reflect from "@/pages/Reflect";
 import Review from "@/pages/Review";
+import Coach from "@/pages/Coach";
 import CalendarPlanner from "@/pages/CalendarPlanner";
 import SettingsPage from "@/pages/Settings";
 import Morning from "@/pages/Morning";
@@ -37,6 +38,7 @@ function AppRouter() {
       <Route path="/priorities" component={Priorities} />
       <Route path="/habits" component={HabitsPage} />
       <Route path="/reflect" component={Reflect} />
+      <Route path="/coach" component={Coach} />
       <Route path="/review" component={Review} />
       <Route path="/issues" component={Issues} />
       <Route path="/calendar-planner" component={CalendarPlanner} />

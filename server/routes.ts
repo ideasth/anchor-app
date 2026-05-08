@@ -12,6 +12,7 @@ import {
 import { getCachedEvents, getCachedEventsForFeeds, eventsForDate } from "./ics";
 import { computeAvailableHoursThisWeek } from "./available-hours";
 import { resolveTravel } from "./travel";
+import { registerCoachRoutes } from "./coach-routes";
 import { buildPlannerXlsx } from "./planner";
 import {
   inferDomain,
@@ -1458,6 +1459,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const id = Number(req.params.id);
     storage.deleteIssue(id);
     res.json({ ok: true });
+  });
+
+  // Feature 5 — Coach API.
+  registerCoachRoutes({
+    app,
+    requireUserOrOrchestrator,
+    getMergedPlannerEvents,
+    computeAvailableHoursThisWeek,
   });
 
   return httpServer;
