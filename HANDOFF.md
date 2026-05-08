@@ -4,6 +4,41 @@ Living document. Append new entries at the top. Each entry: date (AEST), thread 
 
 ---
 
+## 2026-05-08 (17:05 AEST) — Feature 3 (available hours this week) — source merged, deploy STILL gated
+
+**What changed (source only — NOT live yet)**
+- New module `server/available-hours.ts` (348 lines): `computeAvailableHoursThisWeek(events, now)` returns Mon-Sun Melbourne breakdown — sleep 23:00-07:00, family/paid_work/other_committed event classification, deep-work blocks ≥30 min during waking hours.
+- New endpoint `GET /api/available-hours/this-week` in `server/routes.ts`. Uses existing calendar fetch helpers; respects `[Personal]` AUPFHS tagging.
+- New client component `client/src/components/AvailableHoursCard.tsx` (204 lines) — two variants: compact (Morning page) + detailed (Review page).
+- Wired into `client/src/pages/Morning.tsx` (after Lock Priorities) and `client/src/pages/Review.tsx` (after Last 7 Days).
+- `npm run build` succeeded — bundle hashes `index-lCIIXRfQ.js` + `index-CwN8LvOx.css`, server `dist/index.cjs` 1022.2kb.
+
+**STILL BLOCKED — production deploy (3rd consecutive thread)**
+- `publish_website` again returned `{"error":"Website publishing is not enabled"}`. Diagnostic ticket `9a2f2c0a-7c54-4eb2-a1df-cd53f7823aac` remains open.
+- `deploy_website` succeeded for the static frontend preview only — the live `anchor-jod.pplx.app` backend is still serving the OLD bundle (`index-OJD7pA68.js`). The new `/api/available-hours/this-week` endpoint is NOT reachable in production. Verified via curl — request falls through to SPA index.html.
+
+**Next thread — picks up the deploy**
+1. Bootstrap secret if missing (see space Instructions).
+2. Clone repo if needed: `git clone https://github.com/ideasth/anchor-app.git /home/user/workspace/anchor`
+3. Bake secret + build:
+   ```bash
+   cd /home/user/workspace/anchor
+   SECRET=$(cat /home/user/workspace/.secrets/anchor_sync_secret)
+   printf 'export const BAKED_SYNC_SECRET = "%s";\n' "$SECRET" > server/baked-secret.ts
+   npm ci && npm run build
+   ```
+4. Retry `publish_website` with `site_id="77eb73a0-40d8-4ae2-9a78-4239f106294b"`. If still gated, tell the user the diagnostic ticket needs engineering attention before any further Anchor server-side features can ship.
+5. After deploy succeeds, smoke test: `curl -H "X-Anchor-Sync-Secret: $SECRET" https://anchor-jod.pplx.app/port/5000/api/available-hours/this-week` — expect JSON with `freeMinutes`, `deepWorkBlocks[]`, `weekLabel`, etc.
+
+**Pre-existing TS errors (NOT introduced by Feature 3 — safe to ignore)**
+- `client/src/pages/CalendarPlanner.tsx` lines 705, 707
+- `server/routes.ts` lines 935, 960 (`createdAt` missing). Build works because tsx/esbuild is more permissive than strict tsc.
+
+**Pending work for next session**
+See `FEATURES_TODO.md` (root of repo) for full specs of Features 1 (travel time, STATIC) + 2 (project values). Feature 4 (life coach) deferred 2 weeks until 1+2 produce data.
+
+---
+
 ## 2026-05-08 (16:20 AEST) — AUPFHS calendar feed live; deferred bake-time fix
 
 **What changed**

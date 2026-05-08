@@ -10,6 +10,7 @@ import {
   insertGoalSchema,
 } from "@shared/schema";
 import { getCachedEvents, getCachedEventsForFeeds, eventsForDate } from "./ics";
+import { computeAvailableHoursThisWeek } from "./available-hours";
 import { buildPlannerXlsx } from "./planner";
 import {
   inferDomain,
@@ -289,6 +290,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       })
       .sort((a, b) => +new Date(a.start) - +new Date(b.start));
     res.json({ events: filtered });
+  });
+
+  // Available hours this week (Mon-Sun, Australia/Melbourne). Surfaces on
+  // Morning + Review pages. See server/available-hours.ts for details.
+  app.get("/api/available-hours/this-week", async (_req, res) => {
+    try {
+      const events = await getMergedPlannerEvents();
+      const result = computeAvailableHoursThisWeek(events);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
   });
 
   // ---- Planner ----

@@ -16,6 +16,7 @@ import {
 import { Sunrise, Trash2, Check, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Logo } from "@/components/Logo";
+import { AvailableHoursCard } from "@/components/AvailableHoursCard";
 import type { MorningRoutine, Task } from "@shared/schema";
 import { domainLabel, DOMAIN_OPTIONS, ESTIMATE_PRESETS } from "@/lib/anchor";
 import { cn } from "@/lib/utils";
@@ -568,6 +569,17 @@ export default function Morning() {
         >
           {locking ? "Locking…" : "Lock priorities for today"}
         </Button>
+      </section>
+
+      {/* Available project time this week */}
+      <section className="mb-12" data-testid="section-available-hours">
+        <header className="mb-3">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">
+            This week
+          </div>
+          <h2 className="text-xl font-semibold mt-1">How much time you actually have.</h2>
+        </header>
+        <AvailableHoursCard variant="compact" />
       </section>
 
       {/* Floating "Complete morning" FAB when all sections done */}
