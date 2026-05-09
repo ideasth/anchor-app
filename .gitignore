@@ -18,3 +18,6 @@ data.db-journal
 # Build-time secret injection — committed file is empty stub; bake-secret.ts overwrites it before publish
 server/baked-secret.ts
 server/baked-llm-keys.ts
+
+# Bootstrapped runtime secrets — never commit
+.secrets/

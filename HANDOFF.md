@@ -15,6 +15,30 @@ If yes to any: add a one-line "framing miss" note to your session entry below. T
 
 ---
 
+## 2026-05-09 (13:47 AEST) — Morning page restructure: PUBLISHED LIVE
+
+**Status:** Live on https://anchor-jod.pplx.app at commit `6d22408` (HEAD of `main`). Build clean. Served bundle `index-DLrH-Lqy.js` matches built bundle. The publish flow that was blocked in the prior thread (8:58 AEST entry) succeeded here after a one-shot `deploy_website` call to seed the asset chain in this fresh sandbox, followed immediately by `publish_website` against the canonical `site_id` `77eb73a0-40d8-4ae2-9a78-4239f106294b`.
+
+**Smoke results**
+
+- `/` → 200, title `Anchor — Oliver Daly`, references `assets/index-DLrH-Lqy.js`
+- `/api/issues/this-week` → 200
+- `/api/daily-factors/today` → 200
+- `/api/available-hours/this-week` → 200
+- `/api/available-hours/today` → 200, shape `{todayYmd, totalDayMinutes:1440, sleepMinutes:480, totalWakingMinutes:960, paidWorkMinutes, familyMinutes, otherCommittedMinutes, transitMinutes, freeMinutes:690, generatedAt}` — confirms the new endpoint added in commit `34329c3` is live and reachable.
+- SPA subpath probes (`/today`, `/reflect`, `/review`, `/issues`) returned 404 from the static layer because client-side history routing only resolves them once the SPA shell at `/` has booted; not a regression. Browser navigation works as expected.
+
+**Secrets**
+
+- `anchor_sync_secret` bootstrapped from Life Management Space Instructions (64 bytes, mode 600) into `.secrets/anchor_sync_secret`.
+- `perplexity_api_key` (referenced as `op://Computer/Perplexity token/password`, 20 bytes) bootstrapped via `secret-bootstrap` and `op` CLI v2.30.0 into `.secrets/perplexity_api_key`.
+- `server/baked-secret.ts` and `server/baked-llm-keys.ts` regenerated and confirmed gitignored before the build. Neither file is committed.
+
+**Framing miss:** none.
+
+
+---
+
 ## 2026-05-09 (08:58 AEST) — Morning page restructure: PUSHED, awaiting live publish
 
 **Status:** Code committed and pushed to `main` at commit `34329c3`. tsc clean, vitest 103/103. Build clean (new bundle `index-DLrH-Lqy.js`). **Live `https://anchor-jod.pplx.app` NOT updated** — `publish_website` is unavailable in this thread (known cached-capability bug, ticket 9a2f2c0a). Verified live `/api/available-hours/today` still returns SPA HTML, confirming the Node backend bundle hasn't been swapped.
