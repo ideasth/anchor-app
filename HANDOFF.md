@@ -75,7 +75,12 @@ Deploy of `f976e06` failed first time with `mkdir: cannot create directory '/var
 
 - `CONTEXT.md` rewritten end-to-end for the VPS topology. Previous version archived as `CONTEXT_PRE_STAGE_12c_ARCHIVE_20260512.md` in the space.
 - This HANDOFF entry written.
-- Backup restore drill: pending (next step in this thread).
+- Backup restore drill: **PASS** (2026-05-12 09:35 AEST). Full procedure + drill log in `STAGE_12c_RESTORE_DRILL.md` (space file). Restored `anchor-data-2026-05-11T160545Z.db` from OneDrive, 577536 B decompressed (exact match to receipt note), 41 tables, 164 tasks, 10 projects.
+
+Two small findings from the drill:
+
+1. **No `events` table in the live schema.** The drill template inherited an outdated table name from the old mental model. Calendar data actually lives in `time_blocks` (and `inbox_scan_queue` for unprocessed items). The drill script is now updated to probe `time_blocks` and `top_three` instead.
+2. **Backup-ordering quirk.** `anchor-backup-datadb.service` runs `sqlite3 .backup` → zstd → rclone upload → POST receipt, in that order. The snapshot bytes on OneDrive pre-date the receipt insert for that same snapshot by ~4 seconds. Consequence: any restored DB will show `n - 1` rows in `backup_receipts` versus the live API. Not a bug; documented in the drill doc so future-you doesn't chase it.
 
 **Follow-ups / known watch items**
 
@@ -83,6 +88,7 @@ Deploy of `f976e06` failed first time with `mkdir: cannot create directory '/var
 - The verify staleness threshold is now 36h. If the OneDrive backup pipeline ever has a transient failure, the Saturday verifier will alert quickly — that's deliberate.
 - The platform-hosted `anchor-jod.pplx.app` site_id is dormant but not deleted. Add to standing rules: do not deploy to it.
 - Bake-time fix for `aupfhs_ics_url` and `calendar_ics_url` still pending from the 2026-05-08 entry below.
+- Re-run the restore drill at least quarterly, and any time the backup pipeline changes (rclone config, backup script, OneDrive quota, Entra app secret).
 
 ---
 
