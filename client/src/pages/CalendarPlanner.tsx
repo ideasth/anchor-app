@@ -17,6 +17,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import FindTime from "@/pages/FindTime";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -310,6 +311,8 @@ export default function CalendarPlanner() {
   const [viewDate, setViewDate] = useState<Date>(new Date());
   const [drawerDate, setDrawerDate] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  // Stage 16: Find a time dialog.
+  const [findTimeOpen, setFindTimeOpen] = useState(false);
 
   // Wide range so the rolling 12-month year view + kids-with-us detection works.
   const wideRange = useMemo(() => {
@@ -379,16 +382,36 @@ export default function CalendarPlanner() {
             Master feed plus rolling 12-month planner · Australia/Melbourne.
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setExportOpen(true)}
-          data-testid="button-export"
-        >
-          <Download className="h-4 w-4 mr-1" />
-          Export Excel
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setFindTimeOpen(true)}
+            data-testid="button-find-time"
+          >
+            Find a time
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setExportOpen(true)}
+            data-testid="button-export"
+          >
+            <Download className="h-4 w-4 mr-1" />
+            Export Excel
+          </Button>
+        </div>
       </header>
+
+      {/* Stage 16 — Find a time dialog */}
+      <Dialog open={findTimeOpen} onOpenChange={setFindTimeOpen}>
+        <DialogContent className="max-w-2xl" data-testid="find-time-dialog">
+          <DialogHeader>
+            <DialogTitle>Find a time</DialogTitle>
+          </DialogHeader>
+          <FindTime compact />
+        </DialogContent>
+      </Dialog>
 
       {/* ========== Family Notes (today) ========== */}
       <FamilyNotesPanel date={todayDateStr()} />

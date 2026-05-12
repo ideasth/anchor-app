@@ -46,6 +46,7 @@ import {
   runs24hByType,
 } from "./usage-calibration";
 import { registerAdminDbRoutes } from "./admin-db";
+import { handleSchedulingSearch } from "./scheduling-handlers";
 
 // Orchestrator-only auth: protects endpoints that the cron calls from outside
 // the browser. Reads the shared secret from env first, falling back to a
@@ -1726,6 +1727,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const id = Number(req.params.id);
     storage.deleteIssue(id);
     res.json({ ok: true });
+  });
+
+  // Stage 16 — Scheduling search.
+  app.post("/api/scheduling/search", async (req, res) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    // Resolve events from requested sources.
+    // Sources: "outlook" → merged planner events (Outlook + AUPFHS ICS);
+    //          "buoy"   → same merged events (Oliver-owned; in a single-user
+    //                     app the whole planner is Oliver's);
+    //          "ics:<feedId>" → reserved for synced ICS feeds (Stage 17);
+    //                          not yet resolvable, silently skipped.
+    const rawSources = body.sources;
+    const sources: string[] = Array.isArray(rawSources)
+      ? rawSources.filter((s): s is string => typeof s === "string")
+      : [];
+
+    const enabledEvents: import("./ics").CalEvent[] = [];
+    if (sources.includes("outlook") || sources.includes("buoy")) {
+      try {
+        const events = await getMergedPlannerEvents();
+        for (const ev of events) enabledEvents.push(ev);
+      } catch {
+        // Non-fatal: if ICS fetch fails treat as empty calendar.
+      }
+    }
+    // ics:<feedId> sources are wired in Stage 17; skip silently here.
+
+    const result = await handleSchedulingSearch({ body, events: enabledEvents });
+    res.status(result.status).json(result.body);
   });
 
   // Feature 5 — Coach API.
