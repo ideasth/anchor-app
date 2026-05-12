@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "node:http";
 import { storage } from "./storage";
 import {
@@ -47,6 +47,21 @@ import {
 } from "./usage-calibration";
 import { registerAdminDbRoutes } from "./admin-db";
 import { handleSchedulingSearch } from "./scheduling-handlers";
+import { classifyHost } from "./hostname-router";
+import { makeFamilyRouter } from "./family-routes";
+import { makeAvailabilityRouter } from "./availability-routes";
+import {
+  getSetting,
+  setSetting,
+  rotateToken,
+  KEY,
+} from "./app-settings";
+import {
+  listPublicCalendarBlocks,
+  createPublicCalendarBlock,
+  deletePublicCalendarBlock,
+} from "./family-storage";
+import bcrypt from "bcryptjs";
 
 // Orchestrator-only auth: protects endpoints that the cron calls from outside
 // the browser. Reads the shared secret from env first, falling back to a
@@ -134,6 +149,38 @@ const REFLECTION_PROMPTS = [
 ];
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  // Stage 17 — hostname routing.
+  // The family and availability routers are mounted first, before any apex
+  // routes. A host-guard middleware on each router rejects requests from the
+  // wrong hostname with 404.  Apex routes are mounted as today — they only
+  // receive requests classified as "apex" (or null → apex-fallback).
+
+  const familyRouter = makeFamilyRouter();
+  const availabilityRouter = makeAvailabilityRouter();
+
+  // Guard: requests to buoy-family.thinhalo.com are ONLY served by the family
+  // router. Any path not matched there returns 404 (the catch-all inside the
+  // family router handles this). We also 404 family-hostname requests that
+  // accidentally hit the apex route tree.
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const kind = classifyHost(req.hostname);
+    if (kind === "family") {
+      return familyRouter(req, res, next);
+    }
+    if (kind === "availability") {
+      return availabilityRouter(req, res, next);
+    }
+    // Apex (or null → apex fallback) — fall through to existing routes.
+    // But block family-scoped API paths on non-family hosts so crossing the
+    // streams returns 404 rather than accidentally serving apex data.
+    if (req.path.startsWith("/family/api/")) {
+      // family/api paths on non-family hostnames return 404 — family requests
+      // have already been dispatched above, so reaching here means apex or unknown.
+      return void res.status(404).json({ error: "not found" });
+    }
+    next();
+  });
+
   // Admin DB export/import. Both behind requireOrchestrator; import is
   // additionally gated by ANCHOR_DB_IMPORT_ENABLED=1. The sync-secret
   // predicate is used by /api/admin/health to decide whether to reveal
@@ -1767,6 +1814,238 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     getMergedPlannerEvents,
     computeAvailableHoursThisWeek,
   });
+
+  // -----------------------------------------------------------------------
+  // Stage 17 — Calendar settings API (apex only, behind session auth)
+  // -----------------------------------------------------------------------
+
+  // GET /api/settings/calendars — read all calendar settings
+  app.get("/api/settings/calendars", (req: Request, res: Response) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    res.json({
+      public_calendar_enabled: getSetting(KEY.PUBLIC_CALENDAR_ENABLED) === "1",
+      public_calendar_label: getSetting(KEY.PUBLIC_CALENDAR_LABEL),
+      public_calendar_bookable_window_json: getSetting(KEY.PUBLIC_CALENDAR_BOOKABLE_WINDOW_JSON),
+      private_calendar_enabled: getSetting(KEY.PRIVATE_CALENDAR_ENABLED) === "1",
+      private_calendar_user: getSetting(KEY.PRIVATE_CALENDAR_USER),
+      family_calendar_enabled: getSetting(KEY.FAMILY_CALENDAR_ENABLED) === "1",
+      family_calendar_user: getSetting(KEY.FAMILY_CALENDAR_USER),
+      // Tokens shown but hashed versions of passwords never exposed
+      public_calendar_token: getSetting(KEY.PUBLIC_CALENDAR_TOKEN),
+      private_calendar_token: getSetting(KEY.PRIVATE_CALENDAR_TOKEN),
+      family_calendar_token: getSetting(KEY.FAMILY_CALENDAR_TOKEN),
+    });
+  });
+
+  // PATCH /api/settings/calendars — update calendar settings
+  app.patch("/api/settings/calendars", async (req: Request, res: Response) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const body = req.body as Record<string, unknown>;
+
+    if (typeof body.public_calendar_enabled === "boolean") {
+      setSetting(KEY.PUBLIC_CALENDAR_ENABLED, body.public_calendar_enabled ? "1" : "0");
+    }
+    if (typeof body.public_calendar_label === "string") {
+      setSetting(KEY.PUBLIC_CALENDAR_LABEL, body.public_calendar_label);
+    }
+    if (typeof body.public_calendar_bookable_window_json === "string") {
+      setSetting(KEY.PUBLIC_CALENDAR_BOOKABLE_WINDOW_JSON, body.public_calendar_bookable_window_json);
+    }
+    if (typeof body.private_calendar_enabled === "boolean") {
+      setSetting(KEY.PRIVATE_CALENDAR_ENABLED, body.private_calendar_enabled ? "1" : "0");
+    }
+    if (typeof body.private_calendar_user === "string") {
+      setSetting(KEY.PRIVATE_CALENDAR_USER, body.private_calendar_user);
+    }
+    if (typeof body.private_calendar_password === "string" && body.private_calendar_password) {
+      const hash = await bcrypt.hash(body.private_calendar_password as string, 10);
+      setSetting(KEY.PRIVATE_CALENDAR_PASSWORD_HASH, hash);
+    }
+    if (typeof body.family_calendar_enabled === "boolean") {
+      setSetting(KEY.FAMILY_CALENDAR_ENABLED, body.family_calendar_enabled ? "1" : "0");
+    }
+    if (typeof body.family_calendar_user === "string") {
+      setSetting(KEY.FAMILY_CALENDAR_USER, body.family_calendar_user);
+    }
+    if (typeof body.family_calendar_password === "string" && body.family_calendar_password) {
+      const hash = await bcrypt.hash(body.family_calendar_password as string, 10);
+      setSetting(KEY.FAMILY_CALENDAR_PASSWORD_HASH, hash);
+    }
+    res.json({ ok: true });
+  });
+
+  // POST /api/settings/calendars/rotate-token — rotate public/private/family tokens
+  app.post("/api/settings/calendars/rotate-token", (req: Request, res: Response) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const which = String(req.body?.which ?? "");
+    let tokenKey: string;
+    if (which === "public") tokenKey = KEY.PUBLIC_CALENDAR_TOKEN;
+    else if (which === "private") tokenKey = KEY.PRIVATE_CALENDAR_TOKEN;
+    else if (which === "family") tokenKey = KEY.FAMILY_CALENDAR_TOKEN;
+    else return void res.status(400).json({ error: "which must be public|private|family" });
+    const newToken = rotateToken(tokenKey);
+    res.json({ token: newToken });
+  });
+
+  // -----------------------------------------------------------------------
+  // Stage 17 — public_calendar_blocks CRUD (apex only)
+  // -----------------------------------------------------------------------
+
+  app.get("/api/settings/calendars/blocks", (req: Request, res: Response) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    res.json({ blocks: listPublicCalendarBlocks() });
+  });
+
+  app.post("/api/settings/calendars/blocks", (req: Request, res: Response) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    try {
+      const block = createPublicCalendarBlock(req.body);
+      res.status(201).json(block);
+    } catch (err: any) {
+      res.status(400).json({ error: String(err.message) });
+    }
+  });
+
+  app.delete("/api/settings/calendars/blocks/:id", (req: Request, res: Response) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(String(req.params.id), 10);
+    if (!id) return void res.status(400).json({ error: "invalid id" });
+    const ok = deletePublicCalendarBlock(id);
+    if (!ok) return void res.status(404).json({ error: "not found" });
+    res.status(204).send();
+  });
+
+  // -----------------------------------------------------------------------
+  // Stage 17 — family events also accessible from apex (admin)
+  // -----------------------------------------------------------------------
+
+  // These use the apex session auth (not family auth) so Oliver can manage
+  // family content from his admin interface.
+  const {
+    listFamilyEvents: listFamilyEventsStorage,
+    createFamilyEvent: createFamilyEventStorage,
+    patchFamilyEvent: patchFamilyEventStorage,
+    deleteFamilyEvent: deleteFamilyEventStorage,
+    getFamilyDayNote: getFamilyDayNoteStorage,
+    upsertFamilyDayNote: upsertFamilyDayNoteStorage,
+    getFamilyWeekNote: getFamilyWeekNoteStorage,
+    upsertFamilyWeekNote: upsertFamilyWeekNoteStorage,
+  } = await import("./family-storage");
+
+  app.get("/family/api/events", (req: Request, res: Response) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const fromUtc = String(req.query.from || new Date(Date.now() - 30 * 86400000).toISOString());
+    const toUtc = String(req.query.to || new Date(Date.now() + 90 * 86400000).toISOString());
+    res.json({ events: listFamilyEventsStorage(fromUtc, toUtc) });
+  });
+
+  app.post("/family/api/events", (req: Request, res: Response) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    try {
+      const ev = createFamilyEventStorage({ ...req.body, added_by: "admin" });
+      res.status(201).json(ev);
+    } catch (err: any) {
+      res.status(400).json({ error: String(err.message) });
+    }
+  });
+
+  app.patch("/family/api/events/:id", (req: Request, res: Response) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(String(req.params.id), 10);
+    if (!id) return void res.status(400).json({ error: "invalid id" });
+    try {
+      const ev = patchFamilyEventStorage(id, req.body);
+      if (!ev) return void res.status(404).json({ error: "not found" });
+      res.json(ev);
+    } catch (err: any) {
+      res.status(400).json({ error: String(err.message) });
+    }
+  });
+
+  app.delete("/family/api/events/:id", (req: Request, res: Response) => {
+    if (!requireUserOrOrchestrator(req, res)) return;
+    const id = parseInt(String(req.params.id), 10);
+    if (!id) return void res.status(400).json({ error: "invalid id" });
+    const ok = deleteFamilyEventStorage(id);
+    if (!ok) return void res.status(404).json({ error: "not found" });
+    res.status(204).send();
+  });
+
+  // -----------------------------------------------------------------------
+  // Stage 17 — Apex private ICS endpoints (Basic auth + token URL).
+  // These keep the author's existing subscriptions working without re-subscribe.
+  // -----------------------------------------------------------------------
+
+  async function serveApexPrivateIcs(req: Request, res: Response): Promise<void> {
+    const privEnabled = getSetting(KEY.PRIVATE_CALENDAR_ENABLED) === "1";
+    if (!privEnabled) return void res.status(404).send("Not Found");
+
+    // Token-in-path variant
+    if (req.params?.token) {
+      const storedToken = getSetting(KEY.PRIVATE_CALENDAR_TOKEN) ?? "";
+      if (!storedToken || req.params.token !== storedToken) {
+        return void res.status(404).send("Not Found");
+      }
+    } else {
+      // Basic auth
+      const authHeader = req.header("authorization") ?? "";
+      if (!authHeader.toLowerCase().startsWith("basic ")) {
+        res.setHeader("WWW-Authenticate", 'Basic realm="Buoy private calendar"');
+        return void res.status(401).send("Unauthorised");
+      }
+      let decoded: string;
+      try { decoded = Buffer.from(authHeader.slice(6).trim(), "base64").toString("utf8"); }
+      catch { return void res.status(401).send("Unauthorised"); }
+      const colon = decoded.indexOf(":");
+      if (colon < 0) return void res.status(401).send("Unauthorised");
+      const user = decoded.slice(0, colon);
+      const pass = decoded.slice(colon + 1);
+      const storedUser = getSetting(KEY.PRIVATE_CALENDAR_USER) ?? "";
+      const storedHash = getSetting(KEY.PRIVATE_CALENDAR_PASSWORD_HASH) ?? "";
+      if (!storedUser || !storedHash || user !== storedUser) {
+        res.setHeader("WWW-Authenticate", 'Basic realm="Buoy private calendar"');
+        return void res.status(401).send("Unauthorised");
+      }
+      const ok = await bcrypt.compare(pass, storedHash);
+      if (!ok) {
+        res.setHeader("WWW-Authenticate", 'Basic realm="Buoy private calendar"');
+        return void res.status(401).send("Unauthorised");
+      }
+    }
+
+    const s = storage.getSettings();
+    const allFeeds: Array<{ url: string }> = [];
+    if (s.calendar_ics_url) allFeeds.push({ url: s.calendar_ics_url });
+    if (s.aupfhs_ics_url) allFeeds.push({ url: s.aupfhs_ics_url });
+
+    const now = Date.now();
+    const fromUtc = new Date(now - 90 * 86400000).toISOString();
+    const toUtc = new Date(now + 12 * 7 * 86400000).toISOString();
+
+    let calEvents: import("./ics").CalEvent[] = [];
+    try { calEvents = await getCachedEventsForFeeds(allFeeds); } catch {}
+
+    const familyEvents = listFamilyEventsStorage(fromUtc, toUtc);
+    const { emitFamilyIcs } = await import("./public-calendar");
+    const { getFamilyDb } = await import("./family-storage");
+    let dayNotes: Array<{ date_local: string; body: string }> = [];
+    let weekNotes: Array<{ iso_week: string; body: string }> = [];
+    try {
+      const fdb = getFamilyDb();
+      dayNotes = fdb.prepare(`SELECT date_local, body FROM family_day_notes WHERE date_local >= ? AND date_local <= ?`)
+        .all(fromUtc.slice(0, 10), toUtc.slice(0, 10)) as any[];
+      weekNotes = fdb.prepare(`SELECT iso_week, body FROM family_week_notes ORDER BY iso_week`).all() as any[];
+    } catch {}
+
+    const ics = emitFamilyIcs(calEvents, familyEvents, dayNotes, weekNotes);
+    res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+    res.setHeader("Content-Disposition", 'inline; filename="private.ics"');
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(ics);
+  }
+
+  app.get("/cal/private.ics", serveApexPrivateIcs);
+  app.get("/cal/private/:token.ics", serveApexPrivateIcs);
 
   return httpServer;
 }

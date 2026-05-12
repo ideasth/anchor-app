@@ -2,6 +2,99 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-05-13 (AM AEST) — Stage 17: Three-hostname split (public/private calendars + family)
+
+Adds three distinct virtual hosts to a single Buoy process. Apex `buoy.thinhalo.com` is untouched — existing private ICS subscriptions keep working without resubscribe. New `oliver-availability.thinhalo.com` serves a sanitised 12-week availability page + Available-only ICS (token-gated, 404 without token). New `buoy-family.thinhalo.com` serves a single-page family calendar + Add Event + day/week notes + family ICS (Basic auth OR token URL).
+
+**Locked decisions:**
+- Hostname routing: `server/hostname-router.ts` `classifyHost()` → `"apex" | "family" | "availability" | null`. Apex/null fall through to existing routes unchanged.
+- No Outlook writes anywhere. Family events go to `family_events` table only.
+- Family events have `count_as_busy_for_public` flag (default 1). Public ICS never emits SUMMARY/location/description — Available blocks only.
+- Availability ICS: 15-min privacy buffer, 60-min min block, 12-week horizon, weekdays 07:00-19:00 + Sat 08:00-13:00 AEST.
+- Family auth: Basic auth (bcrypt hash in `app_settings`) OR token URL `?t=<token>` setting a long-lived HMAC signed cookie.
+- Availability auth: token in `?t=` sets cookie for HTML page; ICS must always re-supply `?t=`. Missing/wrong → 404 (not 401).
+- Tables bootstrapped inline via `CREATE TABLE IF NOT EXISTS` in module initialisation, consistent with `storage.ts` pattern. No separate migration runner.
+- Two new Vite entries: `client/family/index.html` → `dist/public/family/index.html`, `client/availability/index.html` → `dist/public/availability/index.html`.
+- Settings managed via new `app_settings` key-value table (12 keys covering all three calendar types + tokens + Basic-auth credentials).
+
+**Files added (server):**
+- `server/hostname-router.ts` — `classifyHost()` + `HostKind` type
+- `server/app-settings.ts` — `app_settings` KV store, `getSetting` / `setSetting` / `rotateToken`, `KEY` constants, `_setTestDb` / `_resetDbForTest`
+- `server/family-storage.ts` — CRUD for `family_events`, `family_day_notes`, `family_week_notes`, `public_calendar_blocks`; `bootstrapTables()`
+- `server/public-calendar.ts` — `computePublicBusy()`, `emitPublicIcs()`, `emitFamilyIcs()`, `computeAvailableBlocks()`
+- `server/family-auth.ts` — `checkFamilyAuth()`, `requireFamilyAuth()`, `requireAvailabilityAuth()`, `checkAvailabilityToken()`
+- `server/family-routes.ts` — Router for `buoy-family.thinhalo.com`
+- `server/availability-routes.ts` — Router for `oliver-availability.thinhalo.com`
+
+**Files added (client):**
+- `client/family/index.html`, `client/family/family-main.tsx`, `client/family/FamilyApp.tsx` — family SPA
+- `client/availability/index.html`, `client/availability/availability-main.tsx`, `client/availability/AvailabilityApp.tsx` — availability page
+- `client/src/pages/CalendarSettings.tsx` — settings UI (3 cards: public/private/family)
+- `client/src/pages/CalendarBlocks.tsx` — manual overrides page for `public_calendar_blocks`
+
+**Files modified:**
+- `server/routes.ts` — hostname dispatch middleware, calendar settings API, family events on apex (admin), apex private ICS endpoints `/cal/private.ics` + `/cal/private/:token.ics`
+- `server/auth.ts` — added `/cal/` to `SYNC_ALLOWLIST_PREFIXES` so ICS subscription clients bypass apex session auth
+- `server/static.ts` — hostname-aware static serving for `dist/public/family/` and `dist/public/availability/`
+- `vite.config.ts` — multi-entry `rollupOptions.input` (family + availability)
+- `tailwind.config.ts` — added `client/family/**` and `client/availability/**` to content
+- `client/src/App.tsx` — lazy routes `/settings/calendars` and `/settings/calendars/blocks`
+- `tsconfig.json` — added `"target": "ES2022"` (required for `\u{...}` regex Unicode property escapes in tests)
+
+**Tests:** 109 new. Full suite 294 → 403 (0 failing). Test files:
+- `test/hostname-router.test.ts` (11 tests)
+- `test/public-calendar.test.ts` (19 tests)
+- `test/family-storage.test.ts` (13 tests)
+- `test/family-host-routes.test.ts` (10 tests)
+- `test/availability-host-routes.test.ts` (10 tests)
+- `test/availability-excludes-family.test.ts` (8 tests)
+- `test/family-auth.test.ts` (7 tests)
+- `test/family-event-busy-flag.test.ts` (2 tests)
+- `test/family-page-smoke.test.ts` (9 tests)
+- `test/availability-page-smoke.test.ts` (10 tests)
+- `test/calendar-settings-rotate-token.test.ts` (10 tests)
+
+**Build output:**
+- `dist/public/index.html` (apex SPA — unchanged)
+- `dist/public/family/index.html` (family SPA — new)
+- `dist/public/availability/index.html` (availability page — new)
+
+**Operator runbook delta (DNS + Caddy — must be executed after deploy):**
+
+1. DNS: Add two A records pointing to `203.29.240.189`:
+   - `buoy-family.thinhalo.com` → `203.29.240.189`
+   - `oliver-availability.thinhalo.com` → `203.29.240.189`
+
+2. Caddy vhosts: add two new stanzas to `/etc/caddy/Caddyfile` (same reverse-proxy pattern as the apex stanza):
+   ```
+   buoy-family.thinhalo.com {
+     reverse_proxy 127.0.0.1:5000
+   }
+
+   oliver-availability.thinhalo.com {
+     reverse_proxy 127.0.0.1:5000
+   }
+   ```
+   Then: `sudo systemctl reload caddy`
+
+3. After DNS propagates, verify:
+   - `https://oliver-availability.thinhalo.com/` → 404 (no token)
+   - `https://buoy-family.thinhalo.com/` → 401 (no family auth)
+   - `https://buoy.thinhalo.com/api/health` → 200 (apex untouched)
+
+4. Configure tokens and credentials from the apex Settings → Calendar Settings page at `https://buoy.thinhalo.com/#/settings/calendars`. This seeds the `app_settings` table on first access. Rotate tokens as desired.
+
+**Notable non-obvious decisions:**
+- The `app-settings.ts` and `family-storage.ts` each hold their own SQLite handle to `data.db`. In production this is the same process so SQLite WAL handles concurrency correctly.
+- `checkFamilyAuth()` for Basic auth is synchronous even though bcrypt is normally async — the implementation uses `bcrypt.compareSync()` to keep route handlers synchronous and avoid promise-chain complexity in Express middleware.
+- `emitPublicIcs()` never emits SUMMARY, LOCATION, or DESCRIPTION on VEVENT. Free blocks appear as `SUMMARY:Available`. This is a hard invariant.
+- Availability ICS endpoint (`/elgin.ics`) does not require ICS calendar clients to store a session cookie — the token must be in the URL on every request (`/elgin.ics?t=<token>`).
+- The 15-minute privacy buffer on available blocks (both before and after a busy block) ensures no exact start/end times of blocked events are inferrable.
+
+**Status:** Pushed to `main`. Awaits deploy via `redeploy-republish-buoy` skill + operator DNS + Caddy steps above.
+
+---
+
 ## 2026-05-12 (PM AEST) — Stage 16: Natural-language scheduling search
 
 Adds a natural-language scheduling search flow at `POST /api/scheduling/search`. Accepts either `{prompt}` (LLM-parse then search) or `{parsed}` (skip parse, search directly — used for refinements so re-tweaks are free). Auth: `requireUserOrOrchestrator`.

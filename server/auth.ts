@@ -199,6 +199,10 @@ const SYNC_ALLOWLIST_PREFIXES = [
   "/api/inbox/suggestions",
   "/api/inbox/count",
   "/api/usage/cron-run",
+  // Stage 17: ICS calendar feeds use their own token/Basic auth, not the
+  // apex session cookie.  Allowlist the /cal/ prefix so the requireAuth
+  // middleware doesn't reject calendar-app subscription requests.
+  "/cal/",
 ];
 
 export function isAllowlistedPath(path: string): boolean {

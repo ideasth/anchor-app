@@ -35,6 +35,9 @@ const SettingsPage = lazy(() => import("@/pages/Settings"));
 const Usage = lazy(() => import("@/pages/Usage"));
 // Stage 16: Find a time page (natural-language scheduling search).
 const FindTime = lazy(() => import("@/pages/FindTime"));
+// Stage 17: Calendar settings pages.
+const CalendarSettings = lazy(() => import("@/pages/CalendarSettings"));
+const CalendarBlocks = lazy(() => import("@/pages/CalendarBlocks"));
 
 // Tiny fallback shown for the few hundred ms each lazy chunk takes to fetch.
 // Intentionally minimal — a centred spinner string is less jarring than a
@@ -111,6 +114,9 @@ function AppRouter() {
       <Route path="/planner" component={CalendarPlanner} />
       {/* Stage 16: natural-language scheduling search. */}
       <Route path="/find-time">{() => <FindTime />}</Route>
+      {/* Stage 17: Calendar settings. */}
+      <Route path="/settings/calendars/blocks">{() => <CalendarBlocks />}</Route>
+      <Route path="/settings/calendars">{() => <CalendarSettings />}</Route>
       {/* Settings and Usage are now tabs inside /admin. Preserve old links. */}
       <Route path="/settings" component={SettingsRedirect} />
       <Route path="/usage" component={UsageRedirect} />

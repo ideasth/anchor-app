@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { apiRequest, setStoredToken } from "@/lib/queryClient";
+import { Logo } from "@/components/Logo";
 
 interface AuthStatus {
   hasPassphrase: boolean;
@@ -94,12 +95,7 @@ export default function Login({ onAuthenticated }: { onAuthenticated: () => void
       <Card className="w-full max-w-sm" data-testid="card-login">
         <CardHeader className="text-center space-y-2">
           <div className="mx-auto" aria-label="Buoy logo">
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="20" cy="10" r="4" stroke="currentColor" strokeWidth="2" />
-              <path d="M20 14 V32" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <path d="M14 20 H26" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              <path d="M8 28 C 8 33, 14 36, 20 36 C 26 36, 32 33, 32 28" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
-            </svg>
+            <Logo className="h-10 w-10" />
           </div>
           <CardTitle className="text-xl">Buoy</CardTitle>
           <CardDescription>
