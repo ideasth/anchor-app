@@ -2,6 +2,21 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-05-12 (18:36 AEST) — Routine redeploy via redeploy-republish-buoy skill — DEPLOYED
+
+**Commit deployed:** `de3c064` (fix(stage14b): calendar planner export uses location.origin + server filename buoy-planner). Same commit was the previous Stage 14b hotfix HEAD — no new commits since the last redeploy in this thread; this run was a rebuild-and-restart at the user's request to ship the Calendar Planner export hotfix bundle.
+
+**Deploy path:** `ssh jod@203.29.240.189` → `cd /opt/buoy && git pull origin main && /opt/buoy/ops/deploy.sh`. Script behaved as expected: `git pull` reported "Already up to date", deploy continued anyway per script policy, baked secret from `/opt/buoy/.secrets/buoy_sync_secret`, `npm ci` (599 packages, 8s), `npm run build` (client 6.77s, server bundle 1.1 MB), `pm2 restart buoy` (pid 182516, restart count 8), internal health probe `http://127.0.0.1:5000/api/health` OK on first attempt. Bundle md5 `04c130a441c7f7ab20ef523485b379e4`. Log at `/var/log/buoy/deploy-2026-05-12T083549Z.log`.
+
+**Smoke verify (from sandbox):**
+
+- `GET https://buoy.thinhalo.com/port/5000/api/health` with `X-Buoy-Sync-Secret` → 200 `{"ok":true}`
+- `GET https://anchor.thinhalo.com/port/5000/api/health` with `X-Anchor-Sync-Secret` → 200 `{"ok":true}` (back-compat header + hostname still working)
+
+**Notable:** User switched standing SSH preference from host alias `jod@wmu` to raw IP `jod@203.29.240.189`. Memory updated and `redeploy-republish-buoy` skill canonical command updated accordingly. Future redeploys will use the IP form.
+
+**Last-known-good on VPS:** `de3c064` (rebuilt; bundle md5 `04c130a441c7f7ab20ef523485b379e4`).
+
 ## 2026-05-12 (PM AEST) — Stage 14b: Calendar Planner export hotfix
 
 User reported that the Excel download from the Calendar Planner Export dialog failed with a Chrome "Site wasn't available" error. Root cause investigation: live server endpoint `/api/planner/export` was healthy (HTTP 200 with valid xlsx when called with sync secret; HTTP 401 JSON when called without auth — both correct), and the built client bundle did resolve the `__PORT_5000__` placeholder to an empty string producing a same-origin relative URL. We could not reproduce the failure from outside the user's browser, so the suspected residual cause was the placeholder-based URL build interacting badly with the hash-routed page (`/#/calendar`) under the user's specific browser/proxy session.
