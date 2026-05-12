@@ -24,6 +24,7 @@ import {
   travelOverrides,
   coachSessions,
   coachMessages,
+  relationships,
 } from "@shared/schema";
 import type {
   Task,
@@ -74,6 +75,8 @@ import type {
   InsertCoachSession,
   CoachMessage,
   InsertCoachMessage,
+  Relationship,
+  InsertRelationship,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -440,7 +443,48 @@ CREATE TABLE IF NOT EXISTS coach_messages (
   mode_at_turn TEXT NOT NULL DEFAULT 'plan'
 );
 CREATE INDEX IF NOT EXISTS idx_coach_messages_session ON coach_messages(session_id, created_at);
+
+-- Stage 14 (2026-05-12) — Relationships table.
+-- Replaces hard-coded names that used to live in coach prompts. Read by
+-- buildCoachContextBundle and injected into the Reflect-mode user
+-- message. Seed migration below populates Marieke/Hilde/Axel on an
+-- empty table; a fresh self-host install leaves the table empty and
+-- Reflect prompts simply omit the names section.
+CREATE TABLE IF NOT EXISTS relationships (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  relationship_label TEXT NOT NULL,
+  notes TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  user_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_relationships_active_order ON relationships(active, display_order, id);
 `);
+
+// Stage 14 (2026-05-12) — Seed relationships only when the table is
+// empty. Idempotent: a second boot finds rows and skips the insert.
+try {
+  const row = sqlite
+    .prepare("SELECT COUNT(*) AS c FROM relationships")
+    .get() as { c: number };
+  if ((row?.c ?? 0) === 0) {
+    const insert = sqlite.prepare(
+      `INSERT INTO relationships (name, relationship_label, notes, active, display_order, user_id, created_at, updated_at)
+       VALUES (?, ?, ?, 1, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    );
+    const seedTx = sqlite.transaction(() => {
+      insert.run("Marieke", "partner", null, 0);
+      insert.run("Hilde", "daughter", null, 1);
+      insert.run("Axel", "son", null, 2);
+    });
+    seedTx();
+  }
+} catch {
+  // Migration is best-effort; never fail boot on the seed.
+}
 
 // Coach session full-text search (Feature 5 polish, 2026-05-08).
 // Additive virtual table + triggers — does not alter coach_sessions schema.
@@ -2308,6 +2352,80 @@ export class Storage {
         ),
       )
       .all();
+  }
+
+  // ----- Relationships (Stage 14, 2026-05-12) -----
+  // Replaces hard-coded names in the Reflect coach prompt. Author manages
+  // rows via the admin import endpoint until Stage 14b adds a settings
+  // UI. Soft-delete (active=0) keeps history for past coach sessions.
+  getActiveRelationships(): Relationship[] {
+    return db
+      .select()
+      .from(relationships)
+      .where(eq(relationships.active, 1))
+      .orderBy(relationships.displayOrder, relationships.id)
+      .all();
+  }
+  getRelationship(id: number): Relationship | undefined {
+    return db
+      .select()
+      .from(relationships)
+      .where(eq(relationships.id, id))
+      .get();
+  }
+  listAllRelationships(): Relationship[] {
+    return db
+      .select()
+      .from(relationships)
+      .orderBy(relationships.displayOrder, relationships.id)
+      .all();
+  }
+  createRelationship(
+    input: Omit<InsertRelationship, "id" | "createdAt" | "updatedAt"> & {
+      createdAt?: string;
+      updatedAt?: string;
+    },
+  ): Relationship {
+    const now = new Date().toISOString();
+    return db
+      .insert(relationships)
+      .values({
+        name: input.name,
+        relationshipLabel: input.relationshipLabel,
+        notes: input.notes ?? null,
+        active: input.active ?? 1,
+        displayOrder: input.displayOrder ?? 0,
+        userId: input.userId ?? null,
+        createdAt: input.createdAt ?? now,
+        updatedAt: input.updatedAt ?? now,
+      })
+      .returning()
+      .get();
+  }
+  updateRelationship(
+    id: number,
+    patch: Partial<
+      Pick<
+        Relationship,
+        "name" | "relationshipLabel" | "notes" | "active" | "displayOrder"
+      >
+    >,
+  ): Relationship | undefined {
+    const set: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    if (patch.name !== undefined) set.name = patch.name;
+    if (patch.relationshipLabel !== undefined)
+      set.relationshipLabel = patch.relationshipLabel;
+    if (patch.notes !== undefined) set.notes = patch.notes;
+    if (patch.active !== undefined) set.active = patch.active;
+    if (patch.displayOrder !== undefined) set.displayOrder = patch.displayOrder;
+    db.update(relationships)
+      .set(set as Partial<Relationship>)
+      .where(eq(relationships.id, id))
+      .run();
+    return this.getRelationship(id);
+  }
+  softDeleteRelationship(id: number): Relationship | undefined {
+    return this.updateRelationship(id, { active: 0 });
   }
 
   // ----- Coach session search (FTS5) -----

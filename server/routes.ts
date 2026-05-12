@@ -16,6 +16,10 @@ import { computeAvailableHoursThisWeek, computeAvailableHoursToday } from "./ava
 import { resolveTravel } from "./travel";
 import { registerCoachRoutes } from "./coach-routes";
 import { computeCalmReviewAggregates } from "./calm-review";
+import {
+  resolveSyncSecret,
+  readSyncSecretHeader as readSyncSecretHeaderShared,
+} from "./sync-secret";
 import { buildPlannerXlsx } from "./planner";
 import {
   inferDomain,
@@ -41,19 +45,31 @@ import { registerAdminDbRoutes } from "./admin-db";
 // the browser. Reads the shared secret from env first, falling back to a
 // build-time baked value (used for publish_website where env injection is
 // not supported). In production, if neither is set, the gate FAILS CLOSED.
-const SYNC_SECRET = process.env.ANCHOR_SYNC_SECRET || BAKED_SYNC_SECRET || "";
+//
+// Stage 14 (2026-05-12): the env var rename Anchor -> Buoy is staged.
+// resolveSyncSecret prefers BUOY_SYNC_SECRET and falls back through
+// ANCHOR_SYNC_SECRET → BAKED_SYNC_SECRET.
+const SYNC_SECRET = resolveSyncSecret(process.env, BAKED_SYNC_SECRET);
 const IS_PROD_ROUTES = process.env.NODE_ENV === "production";
 if (!SYNC_SECRET) {
   if (IS_PROD_ROUTES) {
     console.error(
-      "[anchor] FATAL: ANCHOR_SYNC_SECRET is not set in production \u2014 sync/inbox endpoints will reject all requests.",
+      "[buoy] FATAL: BUOY_SYNC_SECRET (or legacy ANCHOR_SYNC_SECRET) is not set in production \u2014 sync/inbox endpoints will reject all requests.",
     );
   } else {
     console.warn(
-      "[anchor] ANCHOR_SYNC_SECRET is not set \u2014 sync/inbox endpoints are unauthenticated (dev mode).",
+      "[buoy] BUOY_SYNC_SECRET is not set \u2014 sync/inbox endpoints are unauthenticated (dev mode).",
     );
   }
 }
+
+// Stage 14: accept either the new X-Buoy-Sync-Secret or the legacy
+// X-Anchor-Sync-Secret header during the rename transition. Cron URLs
+// keep working unchanged on the legacy header.
+function readSyncSecretHeader(req: Request): string {
+  return readSyncSecretHeaderShared(req.headers as Record<string, string | string[] | undefined>);
+}
+
 function requireOrchestrator(req: Request, res: Response): boolean {
   if (!SYNC_SECRET) {
     if (IS_PROD_ROUTES) {
@@ -62,7 +78,7 @@ function requireOrchestrator(req: Request, res: Response): boolean {
     }
     return true; // dev mode: no secret configured
   }
-  const provided = (req.header("x-anchor-sync-secret") || "").trim();
+  const provided = readSyncSecretHeader(req);
   if (provided && provided === SYNC_SECRET) return true;
   res.status(401).json({ error: "orchestrator auth required" });
   return false;
@@ -72,7 +88,7 @@ function requireOrchestrator(req: Request, res: Response): boolean {
 // (orchestrator secret). Accepts either; rejects if neither.
 function requireUserOrOrchestrator(req: Request, res: Response): boolean {
   if (SYNC_SECRET) {
-    const provided = (req.header("x-anchor-sync-secret") || "").trim();
+    const provided = readSyncSecretHeader(req);
     if (provided && provided === SYNC_SECRET) return true;
   }
   const session = getCurrentSession(req);
@@ -117,7 +133,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // full ICS URLs (sync-secret only) vs masked URLs (cookie auth).
   const hasSyncSecret = (req: Request): boolean => {
     if (!SYNC_SECRET) return false;
-    const provided = (req.header("x-anchor-sync-secret") || "").trim();
+    const provided = readSyncSecretHeader(req);
     return provided.length > 0 && provided === SYNC_SECRET;
   };
   registerAdminDbRoutes(

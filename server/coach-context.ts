@@ -41,7 +41,7 @@ export const CRISIS_RESPONSE = [
   "- Beyond Blue \u2014 1300 22 4636",
   "- Emergency \u2014 000",
   "",
-  "Please also consider reaching out directly to your GP, or to Marieke. You don't have to handle this alone, and a coaching chat is the wrong tool for this moment. I'll stay here when you're ready, but please make a human contact first.",
+  "Please also consider reaching out directly to your GP, or to a trusted person in your life. You don't have to handle this alone, and a coaching chat is the wrong tool for this moment. I'll stay here when you're ready, but please make a human contact first.",
 ].join("\n");
 
 // -- Context bundle ----------------------------------------------------------
@@ -110,6 +110,15 @@ export interface CoachContextBundle {
     slot1?: { taskId: number; name: string; status: string } | null;
     slot2?: { taskId: number; name: string; status: string } | null;
     slot3?: { taskId: number; name: string; status: string } | null;
+  }>;
+  // Stage 14 (2026-05-12) — Important people in the user's life, read
+  // from the relationships table at runtime. Empty array means the Coach
+  // does not get any name awareness (acceptable for a fresh self-host
+  // install where the table has not been populated yet).
+  relationships: Array<{
+    name: string;
+    relationshipLabel: string;
+    notes: string | null;
   }>;
 }
 
@@ -302,6 +311,15 @@ export function buildCoachContextBundle({
       slot3: slotEntry((row as any).taskId3),
     }));
 
+  // Stage 14: read names from the relationships table so prompts work
+  // for any user. Empty array is fine — the Reflect prompt template
+  // omits the section entirely.
+  const relationships = storage.getActiveRelationships().map((r) => ({
+    name: r.name,
+    relationshipLabel: r.relationshipLabel,
+    notes: r.notes ?? null,
+  }));
+
   return {
     generatedAt: new Date().toISOString(),
     todayYmd: today,
@@ -330,12 +348,13 @@ export function buildCoachContextBundle({
     pricedProjects,
     lastWeekTimeSpentPerProject,
     recentTopThreeHistory,
+    relationships,
   };
 }
 
 // -- System prompts ----------------------------------------------------------
 
-const COMMON_PREAMBLE = `You are Anchor's private coach for Dr Oliver Daly (also called Justin Oliver Daly), a Melbourne-based clinician (obstetrics & urogynaecology) and healthcare administrator at AUPFHS who lives with ADHD. He uses Anchor as his single life-management surface across work (Elgin House, Sandringham, Peninsula Health, Monash, RANZCOG, IUGA/UGSA, medicolegal), home (partner Marieke; kids Hilde and Axel), and personal projects.
+const COMMON_PREAMBLE = `You are Buoy's private coach. Buoy is a single-user life-management app \u2014 tasks, journal, scheduling, and three short Coach modes (Plan, Reflect, Calm). The user keeps Buoy as their single surface across work, home, and personal projects.
 
 Voice and tone:
 - Australian English. No emoji. Plain prose. Short paragraphs.
@@ -347,7 +366,7 @@ Voice and tone:
 Constraints:
 - Do not invent calendar events, tasks, or people who aren't in the context bundle.
 - Times are Australia/Melbourne unless stated otherwise.
-- If the user expresses suicidal ideation, self-harm, or a clear crisis, stop coaching and direct them to Lifeline (13 11 14), 000, or their GP, and to Marieke. The system will detect most of this automatically; if you sense it and the system hasn't intervened, do it yourself.
+- If the user expresses suicidal ideation, self-harm, or a clear crisis, stop coaching and direct them to Lifeline (13 11 14), 000, or their GP, and to a trusted person in their life. The system will detect most of this automatically; if you sense it and the system hasn't intervened, do it yourself.
 
 The user's current state is provided as a JSON "context bundle" in the next system message. Treat it as ground truth. Do not echo it back.`;
 
@@ -391,22 +410,14 @@ The slot field is 1, 2, or 3 (which of today's top-3 to replace). Pick the lowes
 
 Use "kind" (not "type") as the action discriminator. Only emit one action block per turn, and only when the user has indicated they want a concrete commitment, not just exploration.`;
 
-const REFLECT_MODE_INSTRUCTIONS = `You are in REFLECT mode.
-
-Goal: help the user notice patterns, sit with what's actually going on, and articulate a value-led response \u2014 especially for relationship (Marieke), parenting (Hilde, Axel), house, or identity material. You may also reflect on work patterns when they're emotionally loaded, but never flatten them into productivity advice in this mode.
-
-Stance:
-- Socratic, not directive. Ask one question at a time.
-- Mirror back the most charged or revealing phrase they used. Use their words.
-- Name tensions, paradoxes, or things they're avoiding \u2014 gently, with permission.
-- Do NOT propose a top-3, a task list, or a calendar move in this mode.
-- Do NOT moralise. The user is an adult capable of his own values work.
-- If they ask you to switch to plan mode, say so and stop reflecting.
-
-Output style:
-- Plain prose, paragraph-length, no bullets unless they explicitly ask.
-- One question at a time.
-- It is fine to be quiet \u2014 a single thoughtful question or mirror is often the best turn.`;
+// Stage 14: Reflect-mode prompt + relationships templating live in
+// ./reflect-prompt so unit tests can import them without opening the
+// live data.db handle through storage.ts.
+import {
+  REFLECT_MODE_BASE_INSTRUCTIONS,
+  renderReflectInstructions,
+} from "./reflect-prompt";
+export { REFLECT_MODE_BASE_INSTRUCTIONS, renderReflectInstructions };
 
 // Compact bundle sent to the model. We strip noisy fields (e.g. minute-level
 // deep-work blocks) so the system prompt stays small enough that latency
@@ -425,7 +436,10 @@ export function buildSystemMessages(
   mode: "plan" | "reflect",
   bundle: CoachContextBundle,
 ): Array<{ role: "system"; content: string }> {
-  const modeInstructions = mode === "plan" ? PLAN_MODE_INSTRUCTIONS : REFLECT_MODE_INSTRUCTIONS;
+  const modeInstructions =
+    mode === "plan"
+      ? PLAN_MODE_INSTRUCTIONS
+      : renderReflectInstructions(bundle.relationships ?? []);
   // Combine preamble + mode instructions + bundle into a single system message.
   // sonar-reasoning-pro otherwise treats the second system block as just another
   // input to ignore in favour of (now-disabled) web search results.

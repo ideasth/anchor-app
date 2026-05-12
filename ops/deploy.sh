@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
-# Anchor deploy script — runs ON the VPS (wmu, BinaryLane Sydney, Ubuntu 24.04).
+# Buoy deploy script — runs ON the VPS (wmu, BinaryLane Sydney, Ubuntu 24.04).
+#
+# Stage 14 (2026-05-12): the project was renamed Anchor -> Buoy. This
+# script accepts the new /opt/buoy path with a fallback to /opt/anchor
+# during the transition. The runbook for the rename keeps /opt/anchor
+# as a symlink to /opt/buoy on the VPS so both invocations work.
 #
 # Idempotent. Safe to re-run. Pulls latest main, bakes secrets, builds,
 # restarts the pm2 process, verifies /api/health responds.
 #
-# Usage (on the VPS):
-#   /opt/anchor/ops/deploy.sh             # standard deploy from main
-#   /opt/anchor/ops/deploy.sh --no-pull   # skip git pull (build from current tree)
-#   /opt/anchor/ops/deploy.sh --branch X  # deploy a non-main branch
-#   /opt/anchor/ops/deploy.sh --rollback  # checkout previous commit + rebuild
+# Usage (on the VPS, either path works):
+#   /opt/buoy/ops/deploy.sh                # standard deploy from main
+#   /opt/anchor/ops/deploy.sh              # legacy path, still supported
+#   /opt/buoy/ops/deploy.sh --no-pull      # skip git pull (build from current tree)
+#   /opt/buoy/ops/deploy.sh --branch X     # deploy a non-main branch
+#   /opt/buoy/ops/deploy.sh --rollback     # checkout previous commit + rebuild
 #
 # Exit codes:
 #   0  success
@@ -24,14 +30,27 @@ set -euo pipefail
 # Config
 # ---------------------------------------------------------------------------
 
-REPO_DIR="${ANCHOR_REPO_DIR:-/opt/anchor}"
-SECRETS_DIR="${ANCHOR_SECRETS_DIR:-/opt/anchor/.secrets}"
-SYNC_SECRET_FILE="${SECRETS_DIR}/anchor_sync_secret"
+# Prefer the Buoy paths; fall back to the legacy Anchor ones if the
+# Buoy path is not present yet. Operators can override either with the
+# matching env var.
+default_repo_dir() {
+  if [[ -d "/opt/buoy" ]]; then echo "/opt/buoy";
+  elif [[ -d "/opt/anchor" ]]; then echo "/opt/anchor";
+  else echo "/opt/buoy"; fi
+}
+REPO_DIR="${BUOY_REPO_DIR:-${ANCHOR_REPO_DIR:-$(default_repo_dir)}}"
+SECRETS_DIR="${BUOY_SECRETS_DIR:-${ANCHOR_SECRETS_DIR:-${REPO_DIR}/.secrets}}"
+# Sync-secret filename: try the new name first, then the legacy name.
+if [[ -f "${SECRETS_DIR}/buoy_sync_secret" ]]; then
+  SYNC_SECRET_FILE="${SECRETS_DIR}/buoy_sync_secret"
+else
+  SYNC_SECRET_FILE="${SECRETS_DIR}/anchor_sync_secret"
+fi
 LLM_KEYS_FILE="${SECRETS_DIR}/baked-llm-keys.ts"   # optional; only used if exists
-PM2_APP_NAME="${ANCHOR_PM2_NAME:-anchor}"
-HEALTH_URL="${ANCHOR_HEALTH_URL:-http://127.0.0.1:5000/api/health}"
-BACKUP_DIR="${ANCHOR_BACKUP_DIR:-/opt/anchor/.deploy-backups}"
-LOG_DIR="${ANCHOR_LOG_DIR:-/var/log/anchor}"
+PM2_APP_NAME="${BUOY_PM2_NAME:-${ANCHOR_PM2_NAME:-buoy}}"
+HEALTH_URL="${BUOY_HEALTH_URL:-${ANCHOR_HEALTH_URL:-http://127.0.0.1:5000/api/health}}"
+BACKUP_DIR="${BUOY_BACKUP_DIR:-${ANCHOR_BACKUP_DIR:-${REPO_DIR}/.deploy-backups}}"
+LOG_DIR="${BUOY_LOG_DIR:-${ANCHOR_LOG_DIR:-/var/log/buoy}}"
 BRANCH="main"
 DO_PULL=1
 DO_ROLLBACK=0

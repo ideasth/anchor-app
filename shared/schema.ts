@@ -616,6 +616,34 @@ export const coachSessions = sqliteTable("coach_sessions", {
 export type CoachSession = typeof coachSessions.$inferSelect;
 export type InsertCoachSession = typeof coachSessions.$inferInsert;
 
+// Stage 14 (2026-05-12) — Relationships table.
+//
+// Replaces the hard-coded Marieke / Hilde / Axel references that used to
+// live in REFLECT_MODE_INSTRUCTIONS. The Coach context bundle reads
+// active rows at runtime so Reflect prompts work for any user and a
+// fresh self-host install (empty table) produces sensible reflections
+// without naming anyone.
+//
+// Per Path B (PROJECT_DIRECTION_QUIETLY_DISTRIBUTABLE.md), new tables
+// added from Stage 14 onward carry a nullable user_id so the future
+// multi-user migration is "make it non-null and backfill to user 1".
+//
+// Author-managed: no settings UI this Stage. Rows seeded on empty table
+// during boot migrations; further edits via the admin import endpoint.
+export const relationships = sqliteTable("relationships", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  relationshipLabel: text("relationship_label").notNull(),
+  notes: text("notes"),
+  active: integer("active").notNull().default(1),
+  displayOrder: integer("display_order").notNull().default(0),
+  userId: integer("user_id"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+export type Relationship = typeof relationships.$inferSelect;
+export type InsertRelationship = typeof relationships.$inferInsert;
+
 export const coachMessages = sqliteTable("coach_messages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   sessionId: integer("session_id").notNull(),

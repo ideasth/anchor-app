@@ -63,7 +63,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <div className="px-5 py-5 flex items-center justify-between md:block">
           <div className="flex items-center gap-2">
             <Logo className="h-5 w-5 text-primary" />
-            <div className="font-semibold tracking-tight">Anchor</div>
+            <div className="font-semibold tracking-tight">Buoy</div>
           </div>
           <div className="md:hidden flex gap-1">
             <Button

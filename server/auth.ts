@@ -5,6 +5,7 @@ import { db, storage } from "./storage";
 import { authSessions, type AuthSession } from "@shared/schema";
 import { eq, and, isNull, desc, gt } from "drizzle-orm";
 import { BAKED_SYNC_SECRET } from "./baked-secret";
+import { resolveSyncSecret } from "./sync-secret";
 
 const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 const IS_PROD = process.env.NODE_ENV === "production";
@@ -141,7 +142,10 @@ export function extractTokenFromRequest(req: Request): string | null {
   const qToken =
     typeof (req.query as any)?.t === "string" ? String((req.query as any).t).trim() : "";
   const auth = (req.header("authorization") || "").trim();
-  const xToken = (req.header("x-anchor-token") || "").trim();
+  // Stage 14: accept either X-Buoy-Token (new) or legacy X-Anchor-Token.
+  const xToken =
+    (req.header("x-buoy-token") || "").trim() ||
+    (req.header("x-anchor-token") || "").trim();
   const cookieToken = (req as any).cookies?.[COOKIE_NAME];
   let result: string | null = null;
   if (qToken) result = qToken;
@@ -172,7 +176,9 @@ export function clearSessionCookie(res: Response): void {
   res.clearCookie(COOKIE_NAME, { ...COOKIE_OPTS, maxAge: 0 });
 }
 
-const SYNC_SECRET = process.env.ANCHOR_SYNC_SECRET || BAKED_SYNC_SECRET || "";
+// Stage 14 (2026-05-12): prefer BUOY_SYNC_SECRET; fall back to legacy
+// ANCHOR_SYNC_SECRET so existing deploys keep working through the rename.
+const SYNC_SECRET = resolveSyncSecret(process.env, BAKED_SYNC_SECRET);
 
 // Routes that don't need a session (auth bootstrap + health + public ICS).
 const ALLOWLIST_EXACT = new Set<string>([
@@ -209,8 +215,11 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   if (isAllowlistedPath(path)) return next();
 
   // Orchestrator secret bypass (for any future direct cron calls).
+  // Stage 14: accept either header during the rename transition.
   if (SYNC_SECRET) {
-    const provided = (req.header("x-anchor-sync-secret") || "").trim();
+    const provided =
+      (req.header("x-buoy-sync-secret") || "").trim() ||
+      (req.header("x-anchor-sync-secret") || "").trim();
     if (provided && provided === SYNC_SECRET) return next();
   }
 

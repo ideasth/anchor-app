@@ -4,7 +4,7 @@ export function Logo({ className = "h-6 w-6" }: { className?: string }) {
       viewBox="0 0 32 32"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      aria-label="Anchor"
+      aria-label="Buoy"
       className={className}
     >
       <circle cx="16" cy="8" r="3" stroke="currentColor" strokeWidth="2" />

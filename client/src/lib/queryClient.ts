@@ -32,8 +32,10 @@ function buildHeaders(extra?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = { ...(extra || {}) };
   const token = getStoredToken();
   if (token) {
-    // Send via headers as well — these are stripped by the deploy_website
-    // proxy but work on a published pplx.app URL or direct localhost calls.
+    // Send both the new and legacy header during the Stage 14 Buoy
+    // rename so requests work against either an updated or pre-update
+    // server build.
+    headers["X-Buoy-Token"] = token;
     headers["X-Anchor-Token"] = token;
     headers["Authorization"] = `Bearer ${token}`;
   }

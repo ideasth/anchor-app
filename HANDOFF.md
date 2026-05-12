@@ -1,6 +1,10 @@
-# Handoff notes — Anchor
+# Handoff notes — Buoy (formerly Anchor)
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
+
+## 2026-05-12 — Stage 14: rename Anchor → Buoy + AGPL v3 + relationships table
+
+The project is renamed Anchor → Buoy. New GitHub identity `github.com/ideasth/buoy-app` (rename in operator runbook; GitHub forwards the old URL automatically). New canonical subdomain `buoy.thinhalo.com`; **`anchor.thinhalo.com` is kept live in parallel** via Caddy — both serve the same backend. No 301 redirect yet. New VPS path `/opt/buoy` with `/opt/anchor` left as a symlink during transition; `ops/deploy.sh` accepts either path. Sync secret env var `ANCHOR_SYNC_SECRET` becomes `BUOY_SYNC_SECRET` (server reads either, prefers the new one). Sync header `X-Anchor-Sync-Secret` becomes `X-Buoy-Sync-Secret` (server accepts either). Cron URLs on Perplexity and the wmu systemd timers are **not touched** — they keep working against the kept `anchor.thinhalo.com` subdomain. New `relationships` table introduced with Marieke/Hilde/Axel seeded; the Reflect-mode coach prompt now reads names from the bundle at runtime and omits the section entirely when the table is empty (so a fresh self-host install with no relationships works). AGPL v3 `LICENSE` added; README rewritten as a short stranger-readable doc.
 
 ## Standing audit — read this on every fresh thread
 

@@ -67,7 +67,7 @@ export default function SettingsPage() {
     <div className="px-5 md:px-8 py-8 md:py-10 max-w-2xl space-y-8">
       <header>
         <div className="text-xs uppercase tracking-wider text-muted-foreground">Settings</div>
-        <h1 className="text-2xl font-semibold mt-1">Tune Anchor.</h1>
+        <h1 className="text-2xl font-semibold mt-1">Tune Buoy.</h1>
       </header>
 
       <section className="space-y-4 rounded-lg border bg-card p-5">
@@ -86,7 +86,7 @@ export default function SettingsPage() {
             data-testid="input-coef"
           />
           <div className="text-xs text-muted-foreground">
-            Default 1.5 — Anchor recomputes a rolling average from your last 20 completed tasks.
+            Default 1.5 — Buoy recomputes a rolling average from your last 20 completed tasks.
           </div>
         </div>
 
@@ -160,7 +160,7 @@ export default function SettingsPage() {
       <SecuritySection />
 
       <section className="rounded-lg border bg-muted/30 p-4 text-xs text-muted-foreground">
-        Anchor is single-user, private. Data stored locally in SQLite. Calendar PAT never leaves the
+        Buoy is single-user, private. Data stored locally in SQLite. Calendar PAT never leaves the
         server.
       </section>
     </div>

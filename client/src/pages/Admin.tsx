@@ -362,13 +362,13 @@ function IcsFeedsCard({
       </CardHeader>
       <CardContent className="text-sm space-y-4">
         <div className="text-xs text-muted-foreground">
-          Two parts: the upstream feeds Anchor reads to populate its own
+          Two parts: the upstream feeds Buoy reads to populate its own
           Calendar view, and the published per-category feeds you can
           subscribe to from Apple Calendar, Outlook, or your phone.
         </div>
 
         <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Upstream feeds (Anchor reads these)
+          Upstream feeds (Buoy reads these)
         </div>
         <div className="text-xs text-muted-foreground -mt-3">
           The credential portion of the URL is always masked here. Manage the
@@ -451,7 +451,7 @@ function IcsFeedsCard({
         </div>
         <div className="text-xs text-muted-foreground -mt-3">
           Stable GitHub raw URLs — no credentials, no expiry. Subscribe
-          your phone, iPad, or Mac to any of these to mirror Anchor's
+          your phone, iPad, or Mac to any of these to mirror Buoy's
           calendar data into your native calendar app.
         </div>
 
@@ -552,7 +552,7 @@ function IcsFeedsCard({
             <div className="text-muted-foreground italic">
               Subscribed calendars are read-only on every platform. Refresh
               cadence is controlled by the client — typical defaults are
-              every 1 to 24 hours, which can lag Anchor's own 15-minute
+              every 1 to 24 hours, which can lag Buoy's own 15-minute
               cache.
             </div>
           </div>

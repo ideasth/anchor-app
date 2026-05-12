@@ -101,7 +101,7 @@ export default function Login({ onAuthenticated }: { onAuthenticated: () => void
               <path d="M8 28 C 8 33, 14 36, 20 36 C 26 36, 32 33, 32 28" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
             </svg>
           </div>
-          <CardTitle className="text-xl">Anchor</CardTitle>
+          <CardTitle className="text-xl">Buoy</CardTitle>
           <CardDescription>
             {setup
               ? "Pick a passphrase to lock this app to you. Single passphrase, kept private to you — no account, no email."
