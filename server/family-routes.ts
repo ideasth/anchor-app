@@ -191,7 +191,7 @@ export function makeFamilyRouter(): Router {
   // Serve family SPA
   // ------------------------------------------------------------------
 
-  router.get("/assets/*", (req: Request, res: Response) => {
+  router.get("/assets/*splat", (req: Request, res: Response) => {
     const distBase = path.resolve(__dirname, "public", "family");
     const assetPath = path.join(distBase, req.path);
     if (!assetPath.startsWith(distBase)) return void res.status(404).send("Not Found");

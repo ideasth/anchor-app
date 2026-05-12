@@ -55,7 +55,7 @@ export function makeAvailabilityRouter(): Router {
   });
 
   // Static assets for the availability SPA
-  router.get("/assets/*", requireAvailabilityAuth, (req: Request, res: Response) => {
+  router.get("/assets/*splat", requireAvailabilityAuth, (req: Request, res: Response) => {
     const distBase = path.resolve(__dirname, "public", "availability");
     const assetPath = path.join(distBase, req.path);
     if (!assetPath.startsWith(distBase)) return void res.status(404).send("Not Found");
