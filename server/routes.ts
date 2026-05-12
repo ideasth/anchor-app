@@ -15,6 +15,7 @@ import { getCachedEvents, getCachedEventsForFeeds, eventsForDate } from "./ics";
 import { computeAvailableHoursThisWeek, computeAvailableHoursToday } from "./available-hours";
 import { resolveTravel } from "./travel";
 import { registerCoachRoutes } from "./coach-routes";
+import { computeCalmReviewAggregates } from "./calm-review";
 import { buildPlannerXlsx } from "./planner";
 import {
   inferDomain,
@@ -789,6 +790,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
 
+    // Stage 13a (2026-05-12) — chip-frequency, top-3 mind categories, and
+    // per-session deltas. Computed via the pure helper so the test suite
+    // can exercise the same code path with synthetic session fixtures.
+    const chipAggregates = computeCalmReviewAggregates(calmSessions);
+
     res.json({
       from: start,
       to: today,
@@ -806,6 +812,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         avgIntensityDeltaByVariant: calmAvgDeltaByVariant,
         topTags: calmTopTags,
         linkedIssues: calmLinkedIssues,
+        chipFrequencies: chipAggregates.chipFrequencies,
+        topMindCategories: chipAggregates.topMindCategories,
+        perSessionDeltas: chipAggregates.perSessionDeltas,
       },
     });
   });

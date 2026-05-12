@@ -1,10 +1,14 @@
-// Stage 13 (2026-05-11) — Calm: third Coach mode.
+// Stage 13 (2026-05-11), Stage 13a (2026-05-12) — Calm: third Coach mode.
 //
-// Single-page state machine. Pre-capture → 6 cycles of paced breathing →
-// stepped grounding (see/hear/feel) → reframe (LLM, 8s timeout w/ fallback) →
-// optional reflection branch (3 prompts, one acknowledgement per) →
-// post-capture → done. The grounding flow is local; only reframe + each
-// acknowledgement call the server.
+// Single-page state machine. Pre-capture (chips + brain dump + optional
+// issue) → 6 cycles of paced breathing → stepped grounding (see/hear/feel)
+// → reframe (LLM, 8s timeout w/ fallback) → optional reflection branch
+// (3 prompts, one acknowledgement per) → post-capture (re-asked chips)
+// → done. The grounding flow is local; only reframe + each acknowledge
+// call the server.
+//
+// Stage 13a: pre-capture and post-capture are chip-based and all chip
+// groups are OPTIONAL — Continue / Done are always enabled.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -14,9 +18,24 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Slider } from "@/components/ui/slider";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
+import {
+  AROUSAL_STATE_OPTIONS,
+  ENERGY_OPTIONS,
+  SLEEP_OPTIONS,
+  MOOD_OPTIONS,
+  COGNITIVE_LOAD_OPTIONS,
+  FOCUS_OPTIONS,
+  ALIGNMENT_PEOPLE_OPTIONS,
+  ALIGNMENT_ACTIVITIES_OPTIONS,
+  MIND_CATEGORY_OPTIONS,
+  CalmSingleSelectRow,
+  CalmMultiSelectRow,
+  chipStateToPayload,
+  EMPTY_CALM_CHIP_STATE,
+  type CalmChipState,
+} from "@/lib/calmOptions";
 
 type Variant = "grounding_only" | "grounding_plus_reflection";
 type EntityType = "task" | "project" | "inbox_item" | "freetext";
@@ -33,16 +52,6 @@ type CalmState =
   | "reflection-next"
   | "post-capture"
   | "done";
-
-const FEELING_TAGS = [
-  "overwhelmed",
-  "anxious",
-  "angry",
-  "defeated",
-  "scattered",
-  "frustrated",
-  "sad",
-];
 
 const TOTAL_CYCLES = 6;
 const PHASE_SECONDS = 5;
@@ -71,8 +80,7 @@ export default function Calm() {
   const [selected, setSelected] = useState<SelectedIssue | null>(null);
   const [freetext, setFreetext] = useState("");
   const [showFreetext, setShowFreetext] = useState(false);
-  const [preTags, setPreTags] = useState<string[]>([]);
-  const [preIntensity, setPreIntensity] = useState<number>(5);
+  const [preChips, setPreChips] = useState<CalmChipState>({ ...EMPTY_CALM_CHIP_STATE });
   const [starting, setStarting] = useState(false);
 
   // Session state
@@ -94,12 +102,10 @@ export default function Calm() {
   const [acknowledgement, setAcknowledgement] = useState<string | null>(null);
   const [ackSubmitting, setAckSubmitting] = useState(false);
 
-  // Post-capture state
-  const [postTags, setPostTags] = useState<string[]>([]);
-  const [postIntensity, setPostIntensity] = useState<number>(5);
-  const [postNote, setPostNote] = useState("");
+  // Post-capture state (chip set initialised from pre-capture values
+  // except the brain dump, which starts empty per spec).
+  const [postChips, setPostChips] = useState<CalmChipState>({ ...EMPTY_CALM_CHIP_STATE });
   const [finishing, setFinishing] = useState(false);
-  const [finalSession, setFinalSession] = useState<any | null>(null);
 
   // Issue candidates
   const candQ = useQuery<IssueCandidates>({
@@ -108,12 +114,6 @@ export default function Calm() {
 
   // -- Pre-capture handlers ------------------------------------------------
 
-  function togglePreTag(tag: string) {
-    setPreTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
-    );
-  }
-
   function pickIssue(
     entityType: EntityType,
     entityId: number | null,
@@ -121,6 +121,12 @@ export default function Calm() {
   ) {
     setSelected({ entityType, entityId, freetext: null, label });
     setShowFreetext(false);
+  }
+
+  function clearIssue() {
+    setSelected(null);
+    setShowFreetext(false);
+    setFreetext("");
   }
 
   function useFreetext() {
@@ -133,22 +139,26 @@ export default function Calm() {
     });
   }
 
-  const canStart = selected != null && preTags.length > 0;
-
   async function startSession() {
-    if (!canStart || !selected) return;
     setStarting(true);
     try {
-      const res = await apiRequest("POST", "/api/coach/calm/sessions", {
+      const chipPayload = chipStateToPayload(preChips, "pre");
+      const body: Record<string, unknown> = {
         calm_variant: variant,
-        issue_entity_type: selected.entityType,
-        issue_entity_id: selected.entityId,
-        issue_freetext: selected.freetext,
-        pre_tags: preTags,
-        pre_intensity: preIntensity,
-      });
+        ...chipPayload,
+      };
+      if (selected) {
+        body.issue_entity_type = selected.entityType;
+        body.issue_entity_id = selected.entityId;
+        body.issue_freetext = selected.freetext;
+      }
+      const res = await apiRequest("POST", "/api/coach/calm/sessions", body);
       const json = (await res.json()) as { id: number };
       setSessionId(json.id);
+      // Pre-seed post-capture chips with the pre-capture values so the
+      // user can tap-to-change rather than re-pick. Brain dump stays
+      // blank — the post brain dump is intentionally a fresh entry.
+      setPostChips({ ...preChips, brainDump: "" });
       setState("breathing");
     } catch (err) {
       console.error("[calm] start failed", err);
@@ -227,7 +237,6 @@ export default function Calm() {
       );
       const json = (await res.json()) as { acknowledgement: string };
       setAcknowledgement(json.acknowledgement);
-      // Show acknowledgement briefly, then advance.
       setTimeout(() => {
         setAcknowledgement(null);
         setState(next);
@@ -246,27 +255,17 @@ export default function Calm() {
 
   // -- Post-capture handlers ----------------------------------------------
 
-  function togglePostTag(tag: string) {
-    setPostTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
-    );
-  }
-
   async function finishSession() {
     if (sessionId == null) return;
     setFinishing(true);
     try {
+      const chipPayload = chipStateToPayload(postChips, "post");
       const res = await apiRequest(
         "POST",
         `/api/coach/calm/sessions/${sessionId}/complete`,
-        {
-          post_tags: postTags,
-          post_intensity: postIntensity,
-          post_note: postNote.trim() || null,
-        },
+        chipPayload,
       );
-      const json = (await res.json()) as { session: any };
-      setFinalSession(json.session);
+      await res.json();
       setState("done");
     } catch (err) {
       console.error("[calm] complete failed", err);
@@ -295,16 +294,14 @@ export default function Calm() {
           setSearchQuery={setSearchQuery}
           selected={selected}
           pickIssue={pickIssue}
+          clearIssue={clearIssue}
           showFreetext={showFreetext}
           setShowFreetext={setShowFreetext}
           freetext={freetext}
           setFreetext={setFreetext}
           useFreetext={useFreetext}
-          preTags={preTags}
-          togglePreTag={togglePreTag}
-          preIntensity={preIntensity}
-          setPreIntensity={setPreIntensity}
-          canStart={canStart}
+          chips={preChips}
+          setChips={setPreChips}
           starting={starting}
           startSession={startSession}
         />
@@ -370,12 +367,8 @@ export default function Calm() {
 
       {state === "post-capture" && (
         <PostCaptureScreen
-          postTags={postTags}
-          togglePostTag={togglePostTag}
-          postIntensity={postIntensity}
-          setPostIntensity={setPostIntensity}
-          postNote={postNote}
-          setPostNote={setPostNote}
+          chips={postChips}
+          setChips={setPostChips}
           finishing={finishing}
           onFinish={finishSession}
         />
@@ -383,10 +376,8 @@ export default function Calm() {
 
       {state === "done" && (
         <DoneScreen
-          preIntensity={preIntensity}
-          postIntensity={postIntensity}
-          preTags={preTags}
-          postTags={postTags}
+          preChips={preChips}
+          postChips={postChips}
           onBack={() => setLocation("/coach")}
         />
       )}
@@ -396,6 +387,131 @@ export default function Calm() {
 
 // -- Sub-components --------------------------------------------------------
 
+// Shared chip section block — renders the 8 single-select chip groups
+// followed by the multi-select "What's on my mind" group plus its
+// conditional Other-label input, plus the "Empty my head" textarea.
+// Used by both pre-capture and post-capture so the option order stays
+// identical between the two phases.
+function ChipBlock({
+  chips,
+  setChips,
+  brainDumpPlaceholder,
+  testIdPrefix,
+}: {
+  chips: CalmChipState;
+  setChips: React.Dispatch<React.SetStateAction<CalmChipState>>;
+  brainDumpPlaceholder: string;
+  testIdPrefix: string;
+}) {
+  const otherSelected = chips.mindCategories.includes("Other");
+  return (
+    <div className="space-y-5">
+      <CalmSingleSelectRow
+        label="Arousal state"
+        options={AROUSAL_STATE_OPTIONS}
+        value={chips.arousal}
+        onPick={(v) => setChips((p) => ({ ...p, arousal: v }))}
+        testIdPrefix={`${testIdPrefix}-arousal`}
+      />
+      <CalmSingleSelectRow
+        label="Energy"
+        options={ENERGY_OPTIONS}
+        value={chips.energy}
+        onPick={(v) => setChips((p) => ({ ...p, energy: v }))}
+        testIdPrefix={`${testIdPrefix}-energy`}
+      />
+      <CalmSingleSelectRow
+        label="Sleep quality"
+        options={SLEEP_OPTIONS}
+        value={chips.sleep}
+        onPick={(v) => setChips((p) => ({ ...p, sleep: v }))}
+        testIdPrefix={`${testIdPrefix}-sleep`}
+      />
+      <CalmSingleSelectRow
+        label="Mood"
+        options={MOOD_OPTIONS}
+        value={chips.mood}
+        onPick={(v) => setChips((p) => ({ ...p, mood: v }))}
+        testIdPrefix={`${testIdPrefix}-mood`}
+      />
+      <CalmSingleSelectRow
+        label="Cognitive load"
+        options={COGNITIVE_LOAD_OPTIONS}
+        value={chips.cognitiveLoad}
+        onPick={(v) => setChips((p) => ({ ...p, cognitiveLoad: v }))}
+        testIdPrefix={`${testIdPrefix}-cog`}
+      />
+      <CalmSingleSelectRow
+        label="Focus"
+        options={FOCUS_OPTIONS}
+        value={chips.focus}
+        onPick={(v) => setChips((p) => ({ ...p, focus: v }))}
+        testIdPrefix={`${testIdPrefix}-focus`}
+      />
+      <CalmSingleSelectRow
+        label="Alignment — with those around me"
+        options={ALIGNMENT_PEOPLE_OPTIONS}
+        value={chips.alignmentPeople}
+        onPick={(v) => setChips((p) => ({ ...p, alignmentPeople: v }))}
+        testIdPrefix={`${testIdPrefix}-align-people`}
+      />
+      <CalmSingleSelectRow
+        label="Alignment — activities and what I value"
+        options={ALIGNMENT_ACTIVITIES_OPTIONS}
+        value={chips.alignmentValues}
+        onPick={(v) => setChips((p) => ({ ...p, alignmentValues: v }))}
+        testIdPrefix={`${testIdPrefix}-align-values`}
+      />
+      <div className="space-y-2">
+        <CalmMultiSelectRow
+          label="What's on my mind"
+          options={MIND_CATEGORY_OPTIONS}
+          values={chips.mindCategories}
+          onToggle={(value) =>
+            setChips((p) => {
+              const has = p.mindCategories.includes(value);
+              const nextCats = has
+                ? p.mindCategories.filter((c) => c !== value)
+                : [...p.mindCategories, value];
+              // Deselecting Other clears its inline label.
+              const nextOther =
+                value === "Other" && has ? "" : p.mindOtherLabel;
+              return {
+                ...p,
+                mindCategories: nextCats,
+                mindOtherLabel: nextOther,
+              };
+            })
+          }
+          testIdPrefix={`${testIdPrefix}-mind`}
+        />
+        {otherSelected && (
+          <Input
+            data-testid={`${testIdPrefix}-mind-other-label`}
+            placeholder="What is 'other'?"
+            value={chips.mindOtherLabel}
+            onChange={(e) =>
+              setChips((p) => ({ ...p, mindOtherLabel: e.target.value }))
+            }
+          />
+        )}
+      </div>
+      <div className="space-y-2">
+        <div className="text-sm text-muted-foreground">Empty my head</div>
+        <Textarea
+          data-testid={`${testIdPrefix}-brain-dump`}
+          rows={4}
+          placeholder={brainDumpPlaceholder}
+          value={chips.brainDump}
+          onChange={(e) =>
+            setChips((p) => ({ ...p, brainDump: e.target.value }))
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
 function PreCaptureScreen(props: {
   variant: Variant;
   setVariant: (v: Variant) => void;
@@ -404,16 +520,14 @@ function PreCaptureScreen(props: {
   setSearchQuery: (s: string) => void;
   selected: SelectedIssue | null;
   pickIssue: (entityType: EntityType, entityId: number | null, label: string) => void;
+  clearIssue: () => void;
   showFreetext: boolean;
   setShowFreetext: (b: boolean) => void;
   freetext: string;
   setFreetext: (s: string) => void;
   useFreetext: () => void;
-  preTags: string[];
-  togglePreTag: (t: string) => void;
-  preIntensity: number;
-  setPreIntensity: (n: number) => void;
-  canStart: boolean;
+  chips: CalmChipState;
+  setChips: React.Dispatch<React.SetStateAction<CalmChipState>>;
   starting: boolean;
   startSession: () => void;
 }) {
@@ -426,33 +540,21 @@ function PreCaptureScreen(props: {
 
   return (
     <div className="space-y-6">
-      <section className="space-y-2">
-        <label className="text-sm font-medium">Mode</label>
-        <ToggleGroup
-          type="single"
-          value={props.variant}
-          onValueChange={(v) => {
-            if (v === "grounding_only" || v === "grounding_plus_reflection") {
-              props.setVariant(v);
-            }
-          }}
-          className="justify-start"
-        >
-          <ToggleGroupItem value="grounding_only">Grounding only</ToggleGroupItem>
-          <ToggleGroupItem value="grounding_plus_reflection">
-            Grounding + Structured reflection
-          </ToggleGroupItem>
-        </ToggleGroup>
-      </section>
+      <ChipBlock
+        chips={props.chips}
+        setChips={props.setChips}
+        brainDumpPlaceholder="Anything else on your mind. No structure needed."
+        testIdPrefix="calm-pre"
+      />
 
       <section className="space-y-2">
-        <label className="text-sm font-medium">What is on your mind?</label>
+        <label className="text-sm font-medium">Anchor this to an issue (optional)</label>
         <Input
           placeholder="Search tasks, projects, inbox…"
           value={props.searchQuery}
           onChange={(e) => props.setSearchQuery(e.target.value)}
         />
-        <div className="max-h-64 overflow-y-auto rounded border bg-muted/30 divide-y">
+        <div className="max-h-48 overflow-y-auto rounded border bg-muted/30 divide-y">
           {tasks.length > 0 && (
             <IssueSection
               heading="Tasks"
@@ -523,58 +625,52 @@ function PreCaptureScreen(props: {
             </div>
           )}
           {props.selected && (
-            <div className="text-xs text-muted-foreground">
-              Selected:{" "}
-              <span className="font-medium text-foreground">
-                {props.selected.label}
-              </span>
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <div>
+                Selected:{" "}
+                <span className="font-medium text-foreground">
+                  {props.selected.label}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={props.clearIssue}
+                className="underline hover:text-foreground"
+              >
+                Clear
+              </button>
             </div>
           )}
         </div>
       </section>
 
       <section className="space-y-2">
-        <label className="text-sm font-medium">How are you feeling?</label>
-        <div className="flex flex-wrap gap-2">
-          {FEELING_TAGS.map((tag) => (
-            <button
-              key={tag}
-              type="button"
-              onClick={() => props.togglePreTag(tag)}
-              className={cn(
-                "px-3 py-1.5 rounded-full border text-sm transition-colors",
-                props.preTags.includes(tag)
-                  ? "border-primary bg-primary/10 text-primary"
-                  : "border-border hover:bg-muted",
-              )}
-            >
-              {tag}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <label className="text-sm font-medium">Intensity</label>
-          <span className="text-sm tabular-nums">{props.preIntensity}/10</span>
-        </div>
-        <Slider
-          value={[props.preIntensity]}
-          min={0}
-          max={10}
-          step={1}
-          onValueChange={(v) => props.setPreIntensity(v[0] ?? 0)}
-        />
+        <label className="text-sm font-medium">Mode</label>
+        <ToggleGroup
+          type="single"
+          value={props.variant}
+          onValueChange={(v) => {
+            if (v === "grounding_only" || v === "grounding_plus_reflection") {
+              props.setVariant(v);
+            }
+          }}
+          className="justify-start"
+        >
+          <ToggleGroupItem value="grounding_only">Grounding only</ToggleGroupItem>
+          <ToggleGroupItem value="grounding_plus_reflection">
+            Grounding + Structured reflection
+          </ToggleGroupItem>
+        </ToggleGroup>
       </section>
 
       <Button
         size="lg"
         className="w-full"
-        disabled={!props.canStart || props.starting}
+        disabled={props.starting}
         onClick={props.startSession}
+        data-testid="calm-pre-continue"
       >
-        {props.starting ? "Starting…" : "Start Calm session"}
+        {props.starting ? "Starting…" : "Continue"}
       </Button>
     </div>
   );
@@ -613,7 +709,7 @@ function IssueSection(props: {
 }
 
 function BreathingScreen({ onDone }: { onDone: () => void }) {
-  const [tick, setTick] = useState(0); // seconds elapsed
+  const [tick, setTick] = useState(0);
   const [skipped, setSkipped] = useState(false);
   const startRef = useRef<number>(Date.now());
 
@@ -714,9 +810,7 @@ function ReframeScreen(props: {
   return (
     <div className="space-y-4">
       {props.loading || !props.text ? (
-        <div className="text-center text-muted-foreground italic py-12">
-          …
-        </div>
+        <div className="text-center text-muted-foreground italic py-12">…</div>
       ) : (
         <Card>
           <CardContent className="pt-6 text-lg leading-relaxed">
@@ -804,120 +898,101 @@ function ReflectionScreen(props: {
 }
 
 function PostCaptureScreen(props: {
-  postTags: string[];
-  togglePostTag: (t: string) => void;
-  postIntensity: number;
-  setPostIntensity: (n: number) => void;
-  postNote: string;
-  setPostNote: (s: string) => void;
+  chips: CalmChipState;
+  setChips: React.Dispatch<React.SetStateAction<CalmChipState>>;
   finishing: boolean;
   onFinish: () => void;
 }) {
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-medium">How are you now?</h2>
-      <section className="space-y-2">
-        <label className="text-sm font-medium">Feeling now</label>
-        <div className="flex flex-wrap gap-2">
-          {FEELING_TAGS.map((tag) => (
-            <button
-              key={tag}
-              type="button"
-              onClick={() => props.togglePostTag(tag)}
-              className={cn(
-                "px-3 py-1.5 rounded-full border text-sm transition-colors",
-                props.postTags.includes(tag)
-                  ? "border-primary bg-primary/10 text-primary"
-                  : "border-border hover:bg-muted",
-              )}
-            >
-              {tag}
-            </button>
-          ))}
-        </div>
-      </section>
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <label className="text-sm font-medium">Intensity</label>
-          <span className="text-sm tabular-nums">{props.postIntensity}/10</span>
-        </div>
-        <Slider
-          value={[props.postIntensity]}
-          min={0}
-          max={10}
-          step={1}
-          onValueChange={(v) => props.setPostIntensity(v[0] ?? 0)}
-        />
-      </section>
-      <section className="space-y-2">
-        <label className="text-sm font-medium">Anything to remember?</label>
-        <Input
-          value={props.postNote}
-          onChange={(e) => props.setPostNote(e.target.value)}
-          placeholder="Optional"
-        />
-      </section>
+      <ChipBlock
+        chips={props.chips}
+        setChips={props.setChips}
+        brainDumpPlaceholder="Anything else on your mind. No structure needed."
+        testIdPrefix="calm-post"
+      />
       <Button
         size="lg"
         className="w-full"
         onClick={props.onFinish}
         disabled={props.finishing}
+        data-testid="calm-post-done"
       >
-        {props.finishing ? "Finishing…" : "Finish"}
+        {props.finishing ? "Finishing…" : "Done"}
       </Button>
     </div>
   );
 }
 
+// -- Done summary ----------------------------------------------------------
+//
+// Stage 13a shows the dimensions that changed between pre and post.
+// Dimensions where one side is null or both sides match are omitted.
+
+const CHIP_DIMENSION_LABELS: Array<{
+  key: keyof CalmChipState;
+  label: string;
+}> = [
+  { key: "arousal", label: "Arousal" },
+  { key: "energy", label: "Energy" },
+  { key: "sleep", label: "Sleep" },
+  { key: "mood", label: "Mood" },
+  { key: "cognitiveLoad", label: "Cognitive load" },
+  { key: "focus", label: "Focus" },
+  { key: "alignmentPeople", label: "Alignment — people" },
+  { key: "alignmentValues", label: "Alignment — values" },
+];
+
 function DoneScreen(props: {
-  preIntensity: number;
-  postIntensity: number;
-  preTags: string[];
-  postTags: string[];
+  preChips: CalmChipState;
+  postChips: CalmChipState;
   onBack: () => void;
 }) {
-  const delta = props.postIntensity - props.preIntensity;
-  const added = props.postTags.filter((t) => !props.preTags.includes(t));
-  const dropped = props.preTags.filter((t) => !props.postTags.includes(t));
+  const deltas: Array<{ label: string; from: string; to: string }> = [];
+  for (const { key, label } of CHIP_DIMENSION_LABELS) {
+    const a = props.preChips[key] as string | null;
+    const b = props.postChips[key] as string | null;
+    if (a && b && a !== b) deltas.push({ label, from: a, to: b });
+  }
+  const preCats = new Set(props.preChips.mindCategories);
+  const postCats = new Set(props.postChips.mindCategories);
+  const addedCats = props.postChips.mindCategories.filter((c) => !preCats.has(c));
+  const droppedCats = props.preChips.mindCategories.filter((c) => !postCats.has(c));
+  const nothingChanged =
+    deltas.length === 0 && addedCats.length === 0 && droppedCats.length === 0;
   return (
     <div className="space-y-6">
       <Card>
         <CardContent className="pt-6 space-y-3">
-          <div>
-            <div className="text-xs uppercase tracking-wider text-muted-foreground">
-              Intensity
-            </div>
-            <div className="text-lg">
-              {props.preIntensity} → {props.postIntensity}{" "}
-              <span
-                className={cn(
-                  "text-sm",
-                  delta < 0
-                    ? "text-emerald-600"
-                    : delta > 0
-                      ? "text-amber-600"
-                      : "text-muted-foreground",
-                )}
-              >
-                ({delta > 0 ? "+" : ""}
-                {delta})
-              </span>
-            </div>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">
+            What shifted
           </div>
-          {added.length > 0 && (
-            <div>
-              <div className="text-xs uppercase tracking-wider text-muted-foreground">
-                Added
-              </div>
-              <div className="text-sm">{added.join(", ")}</div>
+          {nothingChanged && (
+            <div className="text-sm text-muted-foreground italic">
+              No movement recorded. That's still a real outcome.
             </div>
           )}
-          {dropped.length > 0 && (
-            <div>
-              <div className="text-xs uppercase tracking-wider text-muted-foreground">
-                Dropped
-              </div>
-              <div className="text-sm">{dropped.join(", ")}</div>
+          {deltas.length > 0 && (
+            <ul className="text-sm space-y-1">
+              {deltas.map((d) => (
+                <li key={d.label}>
+                  <span className="text-muted-foreground">{d.label}:</span>{" "}
+                  {d.from} → {d.to}
+                </li>
+              ))}
+            </ul>
+          )}
+          {addedCats.length > 0 && (
+            <div className="text-sm">
+              <span className="text-muted-foreground">Mind — added:</span>{" "}
+              {addedCats.join(", ")}
+            </div>
+          )}
+          {droppedCats.length > 0 && (
+            <div className="text-sm">
+              <span className="text-muted-foreground">Mind — dropped:</span>{" "}
+              {droppedCats.join(", ")}
             </div>
           )}
         </CardContent>

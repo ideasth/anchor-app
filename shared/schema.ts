@@ -585,6 +585,33 @@ export const coachSessions = sqliteTable("coach_sessions", {
   postIntensity: integer("post_intensity"), // 0-10
   postNote: text("post_note"),
   completedAt: integer("completed_at"),
+  // Stage 13a (2026-05-12) — Calm pre-capture chips + post-capture delta.
+  // 22 nullable TEXT columns mirroring the Reflect chip set, captured at
+  // session start (pre) and again at session end (post). All optional.
+  // Mind categories store a JSON-array string; mind_other_label is the
+  // free-text label shown when the user toggles the "Other" chip.
+  calmPreArousal: text("calm_pre_arousal"),
+  calmPreEnergy: text("calm_pre_energy"),
+  calmPreSleep: text("calm_pre_sleep"),
+  calmPreMood: text("calm_pre_mood"),
+  calmPreCognitiveLoad: text("calm_pre_cognitive_load"),
+  calmPreFocus: text("calm_pre_focus"),
+  calmPreAlignmentPeople: text("calm_pre_alignment_people"),
+  calmPreAlignmentValues: text("calm_pre_alignment_values"),
+  calmPreMindCategories: text("calm_pre_mind_categories"),
+  calmPreMindOtherLabel: text("calm_pre_mind_other_label"),
+  calmPreBrainDump: text("calm_pre_brain_dump"),
+  calmPostArousal: text("calm_post_arousal"),
+  calmPostEnergy: text("calm_post_energy"),
+  calmPostSleep: text("calm_post_sleep"),
+  calmPostMood: text("calm_post_mood"),
+  calmPostCognitiveLoad: text("calm_post_cognitive_load"),
+  calmPostFocus: text("calm_post_focus"),
+  calmPostAlignmentPeople: text("calm_post_alignment_people"),
+  calmPostAlignmentValues: text("calm_post_alignment_values"),
+  calmPostMindCategories: text("calm_post_mind_categories"),
+  calmPostMindOtherLabel: text("calm_post_mind_other_label"),
+  calmPostBrainDump: text("calm_post_brain_dump"),
 });
 export type CoachSession = typeof coachSessions.$inferSelect;
 export type InsertCoachSession = typeof coachSessions.$inferInsert;

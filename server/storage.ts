@@ -541,6 +541,32 @@ for (const stmt of [
   "ALTER TABLE coach_sessions ADD COLUMN post_intensity INTEGER",
   "ALTER TABLE coach_sessions ADD COLUMN post_note TEXT",
   "ALTER TABLE coach_sessions ADD COLUMN completed_at INTEGER",
+  // Stage 13a (2026-05-12) — Calm pre/post chip captures. All nullable
+  // TEXT; mind_categories stores a JSON array string. Existing
+  // calm_pre_intensity / calm_post_intensity are kept for backward compat
+  // with already-shipped Stage 13 sessions but are no longer asked in UI.
+  "ALTER TABLE coach_sessions ADD COLUMN calm_pre_arousal TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_pre_energy TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_pre_sleep TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_pre_mood TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_pre_cognitive_load TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_pre_focus TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_pre_alignment_people TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_pre_alignment_values TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_pre_mind_categories TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_pre_mind_other_label TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_pre_brain_dump TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_post_arousal TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_post_energy TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_post_sleep TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_post_mood TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_post_cognitive_load TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_post_focus TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_post_alignment_people TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_post_alignment_values TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_post_mind_categories TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_post_mind_other_label TEXT",
+  "ALTER TABLE coach_sessions ADD COLUMN calm_post_brain_dump TEXT",
   // Morning page restructure (2026-05-09):
   // - Habits tickboxes (calm focused breathing, medication)
   // - Reflection mirror columns (mood, cognitive_load, alignment) so the
@@ -2027,11 +2053,27 @@ export class Storage {
   // user moves through the state machine.
   createCalmSession(input: {
     calmVariant: "grounding_only" | "grounding_plus_reflection";
-    issueEntityType: "task" | "project" | "inbox_item" | "freetext";
+    // Stage 13a (2026-05-12): issue link is now optional; all chip groups
+    // are optional. The deprecated preTags / preIntensity remain accepted
+    // for backwards-compat with already-shipped client builds.
+    issueEntityType?: "task" | "project" | "inbox_item" | "freetext" | null;
     issueEntityId?: number | null;
     issueFreetext?: string | null;
-    preTags: string[];
-    preIntensity: number;
+    preTags?: string[];
+    preIntensity?: number | null;
+    // Stage 13a pre-capture chips. All optional. mindCategories is an
+    // array; persisted as a JSON-array string.
+    preArousal?: string | null;
+    preEnergy?: string | null;
+    preSleep?: string | null;
+    preMood?: string | null;
+    preCognitiveLoad?: string | null;
+    preFocus?: string | null;
+    preAlignmentPeople?: string | null;
+    preAlignmentValues?: string | null;
+    preMindCategories?: string[] | null;
+    preMindOtherLabel?: string | null;
+    preBrainDump?: string | null;
   }): CoachSession {
     const now = Date.now();
     const todayYmd = new Intl.DateTimeFormat("en-CA", {
@@ -2050,11 +2092,25 @@ export class Storage {
         modelName: "sonar-pro",
         linkedYmd: todayYmd,
         calmVariant: input.calmVariant,
-        issueEntityType: input.issueEntityType,
+        issueEntityType: input.issueEntityType ?? null,
         issueEntityId: input.issueEntityId ?? null,
         issueFreetext: input.issueFreetext ?? null,
-        preTags: JSON.stringify(input.preTags ?? []),
-        preIntensity: input.preIntensity,
+        preTags: input.preTags ? JSON.stringify(input.preTags) : null,
+        preIntensity: input.preIntensity ?? null,
+        calmPreArousal: input.preArousal ?? null,
+        calmPreEnergy: input.preEnergy ?? null,
+        calmPreSleep: input.preSleep ?? null,
+        calmPreMood: input.preMood ?? null,
+        calmPreCognitiveLoad: input.preCognitiveLoad ?? null,
+        calmPreFocus: input.preFocus ?? null,
+        calmPreAlignmentPeople: input.preAlignmentPeople ?? null,
+        calmPreAlignmentValues: input.preAlignmentValues ?? null,
+        calmPreMindCategories:
+          input.preMindCategories && input.preMindCategories.length > 0
+            ? JSON.stringify(input.preMindCategories)
+            : null,
+        calmPreMindOtherLabel: input.preMindOtherLabel ?? null,
+        calmPreBrainDump: input.preBrainDump ?? null,
       })
       .returning()
       .get();
@@ -2075,6 +2131,21 @@ export class Storage {
       endedAt?: number | null;
       totalInputTokens?: number;
       totalOutputTokens?: number;
+      // Stage 13a post-capture chips. Same shape as pre-capture; written
+      // by /complete. All optional. Empty arrays still persist as NULL so
+      // a per-session-delta comparison can distinguish "no answer" from
+      // "explicitly empty".
+      postArousal?: string | null;
+      postEnergy?: string | null;
+      postSleep?: string | null;
+      postMood?: string | null;
+      postCognitiveLoad?: string | null;
+      postFocus?: string | null;
+      postAlignmentPeople?: string | null;
+      postAlignmentValues?: string | null;
+      postMindCategories?: string[] | null;
+      postMindOtherLabel?: string | null;
+      postBrainDump?: string | null;
     },
   ): CoachSession | undefined {
     const set: Partial<CoachSession> = {};
@@ -2095,6 +2166,26 @@ export class Storage {
     if (patch.endedAt !== undefined) set.endedAt = patch.endedAt;
     if (patch.totalInputTokens !== undefined) set.totalInputTokens = patch.totalInputTokens;
     if (patch.totalOutputTokens !== undefined) set.totalOutputTokens = patch.totalOutputTokens;
+    if (patch.postArousal !== undefined) set.calmPostArousal = patch.postArousal;
+    if (patch.postEnergy !== undefined) set.calmPostEnergy = patch.postEnergy;
+    if (patch.postSleep !== undefined) set.calmPostSleep = patch.postSleep;
+    if (patch.postMood !== undefined) set.calmPostMood = patch.postMood;
+    if (patch.postCognitiveLoad !== undefined)
+      set.calmPostCognitiveLoad = patch.postCognitiveLoad;
+    if (patch.postFocus !== undefined) set.calmPostFocus = patch.postFocus;
+    if (patch.postAlignmentPeople !== undefined)
+      set.calmPostAlignmentPeople = patch.postAlignmentPeople;
+    if (patch.postAlignmentValues !== undefined)
+      set.calmPostAlignmentValues = patch.postAlignmentValues;
+    if (patch.postMindCategories !== undefined) {
+      set.calmPostMindCategories =
+        patch.postMindCategories && patch.postMindCategories.length > 0
+          ? JSON.stringify(patch.postMindCategories)
+          : null;
+    }
+    if (patch.postMindOtherLabel !== undefined)
+      set.calmPostMindOtherLabel = patch.postMindOtherLabel;
+    if (patch.postBrainDump !== undefined) set.calmPostBrainDump = patch.postBrainDump;
     if (Object.keys(set).length === 0) return this.getCoachSession(id);
     db.update(coachSessions).set(set).where(eq(coachSessions.id, id)).run();
     return this.getCoachSession(id);
@@ -2169,7 +2260,36 @@ export class Storage {
         .get(entityId) as { subject?: string } | undefined;
       return row?.subject?.trim() || `Inbox item #${entityId}`;
     }
-    return (freetext ?? "").trim() || "Something on my mind";
+    // Stage 13a: an unlinked session is fine. Don't fall back to a
+    // "Something on my mind" placeholder if there is no signal at all.
+    return (freetext ?? "").trim() || "";
+  }
+
+  /**
+   * Stage 13a (2026-05-12): resolve any free-form notes attached to the
+   * linked entity. Tasks and projects expose a notes/description column;
+   * inbox items expose nothing extra here (subject already returned as
+   * the label). Used by the reframe context bundle.
+   */
+  resolveCalmIssueNotes(
+    entityType: string | null | undefined,
+    entityId: number | null | undefined,
+  ): string | null {
+    if (entityType === "task" && entityId != null) {
+      const row = sqlite
+        .prepare("SELECT notes FROM tasks WHERE id = ?")
+        .get(entityId) as { notes?: string | null } | undefined;
+      const v = row?.notes?.trim();
+      return v && v.length > 0 ? v.slice(0, 1000) : null;
+    }
+    if (entityType === "project" && entityId != null) {
+      const row = sqlite
+        .prepare("SELECT description FROM projects WHERE id = ?")
+        .get(entityId) as { description?: string | null } | undefined;
+      const v = row?.description?.trim();
+      return v && v.length > 0 ? v.slice(0, 1000) : null;
+    }
+    return null;
   }
 
   /**

@@ -540,39 +540,103 @@ export function registerCoachRoutes({
     res.json(storage.listCalmIssueCandidates());
   });
 
+  // Stage 13a (2026-05-12): coerce a chip body field into a clean string
+  // value (trim + length cap), or null if missing/blank. Used for every
+  // single-select pre/post chip.
+  function chipStr(v: unknown, max = 80): string | null {
+    if (typeof v !== "string") return null;
+    const s = v.trim();
+    if (!s) return null;
+    return s.slice(0, max);
+  }
+  // Coerce a chip body field into a string array (filtered + length-capped).
+  // Returns null for missing/empty input so the DB cell stays NULL rather
+  // than holding an empty JSON array.
+  function chipArr(v: unknown, maxLen = 12, maxItem = 80): string[] | null {
+    if (!Array.isArray(v)) return null;
+    const out: string[] = [];
+    for (const item of v) {
+      if (typeof item !== "string") continue;
+      const s = item.trim();
+      if (!s) continue;
+      out.push(s.slice(0, maxItem));
+      if (out.length >= maxLen) break;
+    }
+    return out.length > 0 ? out : null;
+  }
+
   app.post("/api/coach/calm/sessions", (req, res) => {
     if (!requireUserOrOrchestrator(req, res)) return;
     const body = req.body ?? {};
     const calmVariant = body.calm_variant === "grounding_plus_reflection"
       ? "grounding_plus_reflection"
       : "grounding_only";
-    const issueEntityType =
-      body.issue_entity_type === "task" ||
-      body.issue_entity_type === "project" ||
-      body.issue_entity_type === "inbox_item" ||
-      body.issue_entity_type === "freetext"
-        ? body.issue_entity_type
+    // Stage 13a: issue link is now fully optional. If missing, the
+    // session has no linked entity. issueFreetext is still allowed when
+    // the user typed something into the "Something else" input.
+    const issueEntityTypeRaw = body.issue_entity_type;
+    const issueEntityType:
+      | "task"
+      | "project"
+      | "inbox_item"
+      | "freetext"
+      | null =
+      issueEntityTypeRaw === "task" ||
+      issueEntityTypeRaw === "project" ||
+      issueEntityTypeRaw === "inbox_item" ||
+      issueEntityTypeRaw === "freetext"
+        ? issueEntityTypeRaw
         : null;
-    if (!issueEntityType) {
-      return res.status(400).json({ error: "issue_entity_type is required" });
-    }
     const issueEntityId =
       typeof body.issue_entity_id === "number" ? body.issue_entity_id : null;
     const issueFreetext =
       typeof body.issue_freetext === "string" ? body.issue_freetext.slice(0, 500) : null;
-    const preTags: string[] = Array.isArray(body.pre_tags)
-      ? body.pre_tags.filter((t: unknown): t is string => typeof t === "string").slice(0, 12)
-      : [];
+    // Light validation kept only when the caller did pick an entity type:
+    // task/project/inbox_item require an id; freetext requires text.
+    if (issueEntityType === "freetext" && !issueFreetext) {
+      return res
+        .status(400)
+        .json({ error: "issue_freetext is required when entity is freetext" });
+    }
+    if (
+      (issueEntityType === "task" ||
+        issueEntityType === "project" ||
+        issueEntityType === "inbox_item") &&
+      issueEntityId == null
+    ) {
+      return res
+        .status(400)
+        .json({ error: "issue_entity_id is required for this entity type" });
+    }
+
+    // Stage 13a chips (all optional).
+    const preArousal = chipStr(body.pre_arousal);
+    const preEnergy = chipStr(body.pre_energy);
+    const preSleep = chipStr(body.pre_sleep);
+    const preMood = chipStr(body.pre_mood);
+    const preCognitiveLoad = chipStr(body.pre_cognitive_load);
+    const preFocus = chipStr(body.pre_focus);
+    const preAlignmentPeople = chipStr(body.pre_alignment_people);
+    const preAlignmentValues = chipStr(body.pre_alignment_values);
+    const preMindCategories = chipArr(body.pre_mind_categories);
+    const preMindOtherLabel = chipStr(body.pre_mind_other_label, 120);
+    const preBrainDump =
+      typeof body.pre_brain_dump === "string"
+        ? body.pre_brain_dump.slice(0, 8000) || null
+        : null;
+
+    // Deprecated Stage 13 fields — still accepted for back-compat with
+    // any client that hasn't been updated to send chips. Not asked in UI.
+    const preTags: string[] | undefined = Array.isArray(body.pre_tags)
+      ? body.pre_tags
+          .filter((t: unknown): t is string => typeof t === "string")
+          .slice(0, 12)
+      : undefined;
     const preIntensity =
       typeof body.pre_intensity === "number"
         ? Math.max(0, Math.min(10, Math.round(body.pre_intensity)))
-        : 0;
-    if (issueEntityType === "freetext" && !issueFreetext) {
-      return res.status(400).json({ error: "issue_freetext is required when entity is freetext" });
-    }
-    if (issueEntityType !== "freetext" && issueEntityId == null) {
-      return res.status(400).json({ error: "issue_entity_id is required for this entity type" });
-    }
+        : null;
+
     const session = storage.createCalmSession({
       calmVariant,
       issueEntityType,
@@ -580,6 +644,17 @@ export function registerCoachRoutes({
       issueFreetext,
       preTags,
       preIntensity,
+      preArousal,
+      preEnergy,
+      preSleep,
+      preMood,
+      preCognitiveLoad,
+      preFocus,
+      preAlignmentPeople,
+      preAlignmentValues,
+      preMindCategories,
+      preMindOtherLabel,
+      preBrainDump,
     });
     res.json({ id: session.id, session });
   });
@@ -603,6 +678,10 @@ export function registerCoachRoutes({
       session.issueEntityId,
       session.issueFreetext,
     );
+    const issueNotes = storage.resolveCalmIssueNotes(
+      session.issueEntityType,
+      session.issueEntityId,
+    );
     let preTags: string[] = [];
     try {
       preTags = JSON.parse(session.preTags ?? "[]");
@@ -610,11 +689,30 @@ export function registerCoachRoutes({
     } catch {
       preTags = [];
     }
+    let preMindCategories: string[] = [];
+    try {
+      preMindCategories = JSON.parse(session.calmPreMindCategories ?? "[]");
+      if (!Array.isArray(preMindCategories)) preMindCategories = [];
+    } catch {
+      preMindCategories = [];
+    }
     const messages = buildCalmReframeMessages({
       issueLabel,
-      preTags,
-      preIntensity: session.preIntensity ?? 0,
+      issueNotes,
       groundingObservations: grounding,
+      preArousal: session.calmPreArousal,
+      preEnergy: session.calmPreEnergy,
+      preSleep: session.calmPreSleep,
+      preMood: session.calmPreMood,
+      preCognitiveLoad: session.calmPreCognitiveLoad,
+      preFocus: session.calmPreFocus,
+      preAlignmentPeople: session.calmPreAlignmentPeople,
+      preAlignmentValues: session.calmPreAlignmentValues,
+      preMindCategories,
+      preMindOtherLabel: session.calmPreMindOtherLabel,
+      preBrainDump: session.calmPreBrainDump,
+      preTags,
+      preIntensity: session.preIntensity,
     });
     let reframeText = CALM_REFRAME_FALLBACK;
     let fallback = true;
@@ -722,14 +820,33 @@ export function registerCoachRoutes({
       return res.status(404).json({ error: "Calm session not found" });
     }
     const body = req.body ?? {};
-    const postTags: string[] = Array.isArray(body.post_tags)
-      ? body.post_tags.filter((t: unknown): t is string => typeof t === "string").slice(0, 12)
-      : [];
+    // Stage 13a post-capture chips (all optional).
+    const postArousal = chipStr(body.post_arousal);
+    const postEnergy = chipStr(body.post_energy);
+    const postSleep = chipStr(body.post_sleep);
+    const postMood = chipStr(body.post_mood);
+    const postCognitiveLoad = chipStr(body.post_cognitive_load);
+    const postFocus = chipStr(body.post_focus);
+    const postAlignmentPeople = chipStr(body.post_alignment_people);
+    const postAlignmentValues = chipStr(body.post_alignment_values);
+    const postMindCategories = chipArr(body.post_mind_categories);
+    const postMindOtherLabel = chipStr(body.post_mind_other_label, 120);
+    const postBrainDump =
+      typeof body.post_brain_dump === "string"
+        ? body.post_brain_dump.slice(0, 8000) || null
+        : null;
+    // Deprecated Stage 13 post fields — still accepted from older clients.
+    const postTags: string[] | undefined = Array.isArray(body.post_tags)
+      ? body.post_tags
+          .filter((t: unknown): t is string => typeof t === "string")
+          .slice(0, 12)
+      : undefined;
     const postIntensity =
       typeof body.post_intensity === "number"
         ? Math.max(0, Math.min(10, Math.round(body.post_intensity)))
-        : 0;
-    const postNote = typeof body.post_note === "string" ? body.post_note.slice(0, 500) : null;
+        : null;
+    const postNote =
+      typeof body.post_note === "string" ? body.post_note.slice(0, 500) : null;
     const now = Date.now();
     const updated = storage.updateCalmSession(id, {
       postTags,
@@ -737,6 +854,17 @@ export function registerCoachRoutes({
       postNote,
       completedAt: now,
       endedAt: now,
+      postArousal,
+      postEnergy,
+      postSleep,
+      postMood,
+      postCognitiveLoad,
+      postFocus,
+      postAlignmentPeople,
+      postAlignmentValues,
+      postMindCategories,
+      postMindOtherLabel,
+      postBrainDump,
     });
     res.json({ session: updated });
   });

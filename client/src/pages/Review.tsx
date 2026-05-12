@@ -33,6 +33,23 @@ interface WeeklyReview {
       label: string;
       count: number;
     }>;
+    // Stage 13a — chip-frequency + delta aggregates. All optional; an
+    // older server build may not emit them at all, and pre-13a sessions
+    // simply have no chip data to count.
+    chipFrequencies?: Array<{
+      key: string;
+      label: string;
+      counts: Array<{ value: string; count: number }>;
+    }>;
+    topMindCategories?: Array<{ category: string; count: number }>;
+    perSessionDeltas?: Array<{
+      sessionId: number;
+      completedAt: number | null;
+      startedAt: number;
+      dimensionChanges: Array<{ label: string; from: string; to: string }>;
+      mindAdded: string[];
+      mindDropped: string[];
+    }>;
   };
 }
 
@@ -177,6 +194,103 @@ export default function Review() {
                       <span className="text-xs text-muted-foreground">×{li.count}</span>
                     </li>
                   ))}
+                </ul>
+              </div>
+            )}
+            {/* Stage 13a — chip frequency breakdown per dimension. */}
+            {w.calm.chipFrequencies && w.calm.chipFrequencies.some((g) => g.counts.length > 0) && (
+              <div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
+                  Chip frequency
+                </div>
+                <ul className="text-sm space-y-1.5">
+                  {w.calm.chipFrequencies
+                    .filter((g) => g.counts.length > 0)
+                    .map((g) => (
+                      <li key={g.key}>
+                        <span className="text-muted-foreground">{g.label}:</span>{" "}
+                        {g.counts.map((c, i) => (
+                          <span key={c.value}>
+                            {c.value} ×{c.count}
+                            {i < g.counts.length - 1 ? ", " : ""}
+                          </span>
+                        ))}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            )}
+            {w.calm.topMindCategories && w.calm.topMindCategories.length > 0 && (
+              <div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">
+                  Most on your mind
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {w.calm.topMindCategories.map((m) => (
+                    <span
+                      key={m.category}
+                      className="text-xs px-2 py-1 rounded-full bg-muted"
+                    >
+                      {m.category}{" "}
+                      <span className="text-muted-foreground">×{m.count}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {w.calm.perSessionDeltas && w.calm.perSessionDeltas.length > 0 && (
+              <div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">
+                  Per-session shifts
+                </div>
+                <ul className="text-sm space-y-1.5">
+                  {w.calm.perSessionDeltas.map((d) => {
+                    const stamp = d.completedAt
+                      ? new Date(d.completedAt).toLocaleString("en-AU", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })
+                      : new Date(d.startedAt).toLocaleString("en-AU", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        });
+                    const nothing =
+                      d.dimensionChanges.length === 0 &&
+                      d.mindAdded.length === 0 &&
+                      d.mindDropped.length === 0;
+                    return (
+                      <li key={d.sessionId}>
+                        <span className="text-muted-foreground">{stamp}:</span>{" "}
+                        {nothing ? (
+                          <span className="italic text-muted-foreground">
+                            No movement recorded.
+                          </span>
+                        ) : (
+                          <>
+                            {d.dimensionChanges.map((c, i) => (
+                              <span key={`${c.label}-${i}`}>
+                                {c.label}: {c.from} → {c.to}
+                                {i < d.dimensionChanges.length - 1 ? " · " : ""}
+                              </span>
+                            ))}
+                            {d.mindAdded.length > 0 && (
+                              <span>
+                                {d.dimensionChanges.length > 0 ? " · " : ""}
+                                Mind +: {d.mindAdded.join(", ")}
+                              </span>
+                            )}
+                            {d.mindDropped.length > 0 && (
+                              <span>
+                                {(d.dimensionChanges.length > 0 ||
+                                  d.mindAdded.length > 0) && " · "}
+                                Mind −: {d.mindDropped.join(", ")}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
