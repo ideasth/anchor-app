@@ -93,7 +93,7 @@ export default function Login({ onAuthenticated }: { onAuthenticated: () => void
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <Card className="w-full max-w-sm" data-testid="card-login">
         <CardHeader className="text-center space-y-2">
-          <div className="mx-auto" aria-label="Anchor logo">
+          <div className="mx-auto" aria-label="Buoy logo">
             <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
               <circle cx="20" cy="10" r="4" stroke="currentColor" strokeWidth="2" />
               <path d="M20 14 V32" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />

@@ -58,7 +58,7 @@ export function registerAdminDbRoutes(
     try {
       // better-sqlite3's .backup() is the online-backup API: produces a
       // consistent snapshot even with concurrent writers.
-      tmpPath = path.join(os.tmpdir(), `anchor-export-${Date.now()}.db`);
+      tmpPath = path.join(os.tmpdir(), `buoy-export-${Date.now()}.db`);
       await rawSqlite.backup(tmpPath);
 
       const stat = await fs_promises.stat(tmpPath);
@@ -67,7 +67,7 @@ export function registerAdminDbRoutes(
       res.setHeader("Content-Length", String(stat.size));
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename="anchor-data-${stamp}.db"`,
+        `attachment; filename="buoy-data-${stamp}.db"`,
       );
 
       const stream = fs.createReadStream(tmpPath);
@@ -139,7 +139,7 @@ export function registerAdminDbRoutes(
       }
 
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const tmpPath = path.join(os.tmpdir(), `anchor-import-${stamp}.db`);
+      const tmpPath = path.join(os.tmpdir(), `buoy-import-${stamp}.db`);
       const backupPath = `${DB_PATH}.bak.${stamp}`;
 
       try {

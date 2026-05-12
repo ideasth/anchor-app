@@ -1104,14 +1104,16 @@ function ExportDialog({
     const params = new URLSearchParams({ from, to });
     let token: string | null = null;
     try {
-      token = localStorage.getItem("anchor_token");
+      token =
+        localStorage.getItem("buoy_token") ||
+        localStorage.getItem("anchor_token");
     } catch {}
     if (token) params.set("t", token);
     const apiBase = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
     const url = `${apiBase}/api/planner/export?${params.toString()}`;
     const a = document.createElement("a");
     a.href = url;
-    a.download = `anchor-planner-${from}-to-${to}.xlsx`;
+    a.download = `buoy-planner-${from}-to-${to}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();

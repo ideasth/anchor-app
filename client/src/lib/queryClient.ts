@@ -11,7 +11,25 @@ export function buildApiUrl(path: string): string {
 export function buildAuthHeaders(extra?: Record<string, string>): Record<string, string> {
   return buildHeaders(extra);
 }
-const TOKEN_KEY = "anchor_token";
+const TOKEN_KEY = "buoy_token";
+
+// Stage 14 phase 2 (2026-05-12): one-time migration from the legacy
+// "anchor_token" localStorage key to "buoy_token". Runs at module load.
+// Idempotent: only copies when the legacy key exists and the new key
+// hasn't been populated yet. The legacy key is intentionally left in
+// place for one release in case a user reverts to a pre-rename build.
+try {
+  if (typeof localStorage !== "undefined") {
+    const legacyToken = localStorage.getItem("anchor_token");
+    const currentToken = localStorage.getItem("buoy_token");
+    if (legacyToken && !currentToken) {
+      localStorage.setItem("buoy_token", legacyToken);
+    }
+    // Do NOT remove the legacy key — leaving it for one release in case a user reverts.
+  }
+} catch {
+  /* localStorage unavailable (SSR or disabled) — no-op */
+}
 
 export function getStoredToken(): string | null {
   try {
@@ -32,18 +50,16 @@ function buildHeaders(extra?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = { ...(extra || {}) };
   const token = getStoredToken();
   if (token) {
-    // Send both the new and legacy header during the Stage 14 Buoy
-    // rename so requests work against either an updated or pre-update
-    // server build.
+    // X-Buoy-Token (legacy X-Anchor-Token still accepted by server).
     headers["X-Buoy-Token"] = token;
-    headers["X-Anchor-Token"] = token;
     headers["Authorization"] = `Bearer ${token}`;
   }
   return headers;
 }
 
 // Append ?t=<token> to API URLs. Required to authenticate through the
-// deploy_website proxy, which strips Cookie / Authorization / X-Anchor-Token.
+// deploy_website proxy, which strips Cookie / Authorization / X-Buoy-Token
+// (legacy X-Anchor-Token still accepted by server).
 // Public/auth endpoints (status, login, setup) don't need it but accepting
 // the param does no harm so we always append when a token is present.
 function withAuthQuery(url: string): string {

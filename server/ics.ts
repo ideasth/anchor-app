@@ -162,7 +162,7 @@ export async function getCachedEvents(url: string, force = false): Promise<CalEv
   try {
     // Strip embedded credentials from the URL (Node's fetch rejects them) and
     // forward them as a Basic Auth header instead.
-    const headers: Record<string, string> = { "User-Agent": "Anchor/1.0 (oliver-daly)" };
+    const headers: Record<string, string> = { "User-Agent": "Buoy/1.0" };
     let cleanUrl = url;
     try {
       const parsed = new URL(url);
