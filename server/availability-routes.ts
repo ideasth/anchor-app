@@ -54,11 +54,15 @@ export function makeAvailabilityRouter(): Router {
     res.sendFile(indexPath);
   });
 
-  // Static assets for the availability SPA
+  // Static assets for the availability SPA. Vite emits a shared assets
+  // dir at dist/public/assets/; the availability index.html references them
+  // as `../assets/...` which resolves to /assets/<file> in the browser, so
+  // we serve from the shared dir (NOT dist/public/availability/assets).
   router.get("/assets/*splat", requireAvailabilityAuth, (req: Request, res: Response) => {
-    const distBase = path.resolve(__dirname, "public", "availability");
-    const assetPath = path.join(distBase, req.path);
-    if (!assetPath.startsWith(distBase)) return void res.status(404).send("Not Found");
+    const distBase = path.resolve(__dirname, "public", "assets");
+    const rel = req.path.replace(/^\/assets\//, "");
+    const assetPath = path.join(distBase, rel);
+    if (!assetPath.startsWith(distBase + path.sep)) return void res.status(404).send("Not Found");
     res.sendFile(assetPath, (err) => {
       if (err) res.status(404).send("Not Found");
     });

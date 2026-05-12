@@ -191,10 +191,17 @@ export function makeFamilyRouter(): Router {
   // Serve family SPA
   // ------------------------------------------------------------------
 
+  // Vite emits a single shared assets dir at dist/public/assets/ and the
+  // family index.html references them as `../assets/...`. From a browser
+  // sitting at https://buoy-family.thinhalo.com/ that resolves to
+  // /assets/<hash>.js, so we serve from the shared dist/public/assets dir
+  // (NOT dist/public/family/assets which doesn't exist).
   router.get("/assets/*splat", (req: Request, res: Response) => {
-    const distBase = path.resolve(__dirname, "public", "family");
-    const assetPath = path.join(distBase, req.path);
-    if (!assetPath.startsWith(distBase)) return void res.status(404).send("Not Found");
+    const distBase = path.resolve(__dirname, "public", "assets");
+    // req.path is /assets/<file>; strip the leading /assets to map into distBase.
+    const rel = req.path.replace(/^\/assets\//, "");
+    const assetPath = path.join(distBase, rel);
+    if (!assetPath.startsWith(distBase + path.sep)) return void res.status(404).send("Not Found");
     res.sendFile(assetPath, (err) => {
       if (err) res.status(404).send("Not Found");
     });

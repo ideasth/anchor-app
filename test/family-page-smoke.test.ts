@@ -20,6 +20,16 @@ const FAMILY_HTML = readFileSync(
   "utf8",
 );
 
+const FAMILY_ROUTES_SRC = readFileSync(
+  path.resolve(__dirname, "../server/family-routes.ts"),
+  "utf8",
+);
+
+const AVAILABILITY_ROUTES_SRC = readFileSync(
+  path.resolve(__dirname, "../server/availability-routes.ts"),
+  "utf8",
+);
+
 describe("family SPA smoke", () => {
   it("FamilyApp.tsx exports default component", () => {
     expect(FAMILY_APP_SRC).toContain("export default function FamilyApp");
@@ -54,6 +64,28 @@ describe("family SPA smoke", () => {
 
   it("EventDialog has count_as_busy_for_public checkbox", () => {
     expect(FAMILY_APP_SRC).toContain("count_as_busy_for_public");
+  });
+
+  // Regression — Stage 17 hotfix.
+  // Vite emits a single shared dist/public/assets/ dir; index.html lives at
+  // dist/public/family/index.html and references assets as `../assets/...`.
+  // In the browser that resolves to /assets/<file>, so the Express handler
+  // MUST serve from dist/public/assets, NOT dist/public/family/assets.
+  it("family /assets handler serves from shared dist/public/assets", () => {
+    // Look for resolve(__dirname, "public", "assets")
+    expect(FAMILY_ROUTES_SRC).toMatch(/path\.resolve\(__dirname,\s*"public",\s*"assets"\)/);
+    // Must NOT resolve to public/family for the asset distBase — that path
+    // doesn't exist on disk.
+    expect(FAMILY_ROUTES_SRC).not.toMatch(
+      /distBase\s*=\s*path\.resolve\(__dirname,\s*"public",\s*"family"\)/,
+    );
+  });
+
+  it("availability /assets handler serves from shared dist/public/assets", () => {
+    expect(AVAILABILITY_ROUTES_SRC).toMatch(/path\.resolve\(__dirname,\s*"public",\s*"assets"\)/);
+    expect(AVAILABILITY_ROUTES_SRC).not.toMatch(
+      /distBase\s*=\s*path\.resolve\(__dirname,\s*"public",\s*"availability"\)/,
+    );
   });
 
   it("no emoji in family SPA source", () => {
