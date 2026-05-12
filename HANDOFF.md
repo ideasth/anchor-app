@@ -2,6 +2,25 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-05-12 (13:14 AEST) — Routine redeploy via redeploy-republish-buoy skill — DEPLOYED
+
+**Commit deployed:** `f65d13c` (chore(stage14): phase 2 — rename remaining client/server anchor refs to buoy). Fast-forward from previous LKG `db17b33`, 8 files changed (+215 / -13), three new test files: `admin-db-filenames.test.ts`, `ics-user-agent.test.ts`, `query-client-token.test.ts`.
+
+**Deploy path:** `ssh jod@wmu` → `cd /opt/buoy && git pull origin main && /opt/buoy/ops/deploy.sh`. Script behaved as expected: baked secret from `/opt/buoy/.secrets/buoy_sync_secret`, `npm ci` (599 packages, 9s), `npm run build` (client 7.57s, server bundle 1.1 MB), `pm2 restart buoy` (pid 161621), internal health probe `http://127.0.0.1:5000/api/health` OK on first attempt. Bundle md5 `998341cf983e00a673988763b6db6e49`. Log at `/var/log/buoy/deploy-2026-05-12T031305Z.log`.
+
+**Smoke verify (from sandbox):**
+
+- `GET https://buoy.thinhalo.com/port/5000/api/health` with `X-Buoy-Sync-Secret` → 200 `{"ok":true}`
+- `GET https://anchor.thinhalo.com/port/5000/api/health` with `X-Anchor-Sync-Secret` → 200 `{"ok":true}` (back-compat header + hostname still working)
+- `GET https://buoy.thinhalo.com/port/5000/api/admin/health` confirms DB at `/home/jod/buoy/data.db` (548864 bytes), 5 recent backup receipts, latest OneDrive backup `1778515549` (2026-05-12 ~01:25 AEST), `importEnabled: false` as expected.
+
+**Observations / follow-ups**
+
+- Deploy script reported uncommitted working-tree files on the VPS at `/opt/buoy`: `.deploy-backups/`, `data.db.pre-stage79-migration`, `ecosystem.config.cjs`, `start.sh`, `start.sh.bak`. None are tracked; deploy overwrote generated files and continued. Worth a future cleanup pass but not blocking.
+- The `git pull` output still shows `https://github.com/ideasth/anchor-app` because the VPS clone uses the old URL — GitHub auto-forwards from the rename. Harmless; the canonical repo is `github.com/ideasth/buoy-app`. Could be updated with `git remote set-url origin https://github.com/ideasth/buoy-app.git` on a future deploy if we want the logs to match the new identity.
+- Build emitted the usual chunk-size warning (`index-*.js` ~509 kB, `Usage-*.js` ~405 kB). Pre-existing, not introduced by this deploy.
+- No skill recipe changes needed — deploy.sh behaviour, baked-secret path, smoke endpoints all unchanged. `redeploy-republish-buoy` skill `Last update` block updated to point at `f65d13c` as new LKG.
+
 ## 2026-05-12 — Stage 14: rename Anchor → Buoy + AGPL v3 + relationships table
 
 The project is renamed Anchor → Buoy. New GitHub identity `github.com/ideasth/buoy-app` (rename in operator runbook; GitHub forwards the old URL automatically). New canonical subdomain `buoy.thinhalo.com`; **`anchor.thinhalo.com` is kept live in parallel** via Caddy — both serve the same backend. No 301 redirect yet. New VPS path `/opt/buoy` with `/opt/anchor` left as a symlink during transition; `ops/deploy.sh` accepts either path. Sync secret env var `ANCHOR_SYNC_SECRET` becomes `BUOY_SYNC_SECRET` (server reads either, prefers the new one). Sync header `X-Anchor-Sync-Secret` becomes `X-Buoy-Sync-Secret` (server accepts either). Cron URLs on Perplexity and the wmu systemd timers are **not touched** — they keep working against the kept `anchor.thinhalo.com` subdomain. New `relationships` table introduced with Marieke/Hilde/Axel seeded; the Reflect-mode coach prompt now reads names from the bundle at runtime and omits the section entirely when the table is empty (so a fresh self-host install with no relationships works). AGPL v3 `LICENSE` added; README rewritten as a short stranger-readable doc.
