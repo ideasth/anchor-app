@@ -2,6 +2,54 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-05-12 (PM AEST) — Stage 16: Natural-language scheduling search
+
+Adds a natural-language scheduling search flow at `POST /api/scheduling/search`. Accepts either `{prompt}` (LLM-parse then search) or `{parsed}` (skip parse, search directly — used for refinements so re-tweaks are free). Auth: `requireUserOrOrchestrator`.
+
+**Locked decisions:**
+- Parser: LLM-based (`sonar-pro`) via the existing Perplexity adapter. Prompt template at `server/prompts/scheduling-parser.md`. Validates and clamps JSON shape; throws `SchedulingParseError` on malformed output.
+- Search window: 07:00–21:00 Australia/Melbourne, all days. Narrowed by `dateConstraints`/`timePreferences`. Deterministic, explainable ranking (date/time match > least fragmentation > avoidance of early/late > same-location adjacency). Returns 3–5 candidates.
+- Source filter: per-search chip row. "My Outlook" + "My Buoy events" default ON; Marieke/Hilde/Axel ICS chips reserved for Stage 17. Chip state persists in `localStorage.findTimeSources`. Empty sources → `needsClarification` (not 4xx).
+- Clarification: missing `duration`, `dates`, or `sources` → 200 with `{needsClarification: true, missing: [...], parsed: {...partial}}`. UI shows the partial interpretation and asks for the missing piece.
+- UI: standalone `/#/find-time` page AND a "Find a time" button in the Calendar page header that opens a Dialog wrapping `<FindTime compact />`.
+
+**Files added (server):**
+- `server/scheduling-parser.ts` — `generateParsed()` LLM wrapper
+- `server/scheduling-search.ts` — `searchSlots()` deterministic ranker
+- `server/scheduling-handlers.ts` — `handleSchedulingSearch()` pure handler
+- `server/prompts/scheduling-parser.md` — LLM prompt template (AU English, strict JSON)
+
+**Files added (client):**
+- `client/src/pages/FindTime.tsx` — top-level page, compact prop for dialog mode
+- `client/src/components/find-time/SourceChips.tsx` — chip row with localStorage
+- `client/src/components/find-time/PromptInput.tsx` — textarea + submit
+- `client/src/components/find-time/ParsedInterpretation.tsx` — editable parsed summary
+- `client/src/components/find-time/CandidateSlots.tsx` — result cards (display only, no booking)
+- `client/src/components/find-time/ClarificationBanner.tsx` — missing-field banner
+
+**Files modified (minimal wiring):**
+- `server/routes.ts` — registers `POST /api/scheduling/search`
+- `client/src/App.tsx` — adds `/#/find-time` route
+- `client/src/pages/CalendarPlanner.tsx` — adds "Find a time" button + Dialog in header
+
+**Tests:** 57 new, full suite 237 → 294 (0 failing). Test files:
+- `test/scheduling-parser.test.ts` (10 tests)
+- `test/scheduling-search.test.ts` (10 tests)
+- `test/scheduling-routes.test.ts` (13 tests)
+- `test/find-time-page.test.tsx` (24 tests)
+
+**Notable non-obvious decisions:**
+- Default LLM model for parsing: `sonar-pro` (same as Coach/Calm/Reflect plan mode).
+- `melbDateTime()` in `scheduling-search.ts` uses a probe+offset pattern to convert Melbourne local times to UTC. There was a sign error in the initial implementation (`probe - offsetMs` → corrected to `probe + offsetMs`); this was caught and fixed before commit.
+- Calendar page file edited: `client/src/pages/CalendarPlanner.tsx`.
+- The `type: "exact"` date constraint now has both `candidateDates` and `effectiveWindow` support so per-date time-of-day windows work.
+
+**Net LOC (excluding tests):** +2519 insertions, -9 deletions = +2510 net (17 files changed).
+
+**Commit:** `86437c2`. Awaits deploy via the `redeploy-republish-buoy` skill.
+
+---
+
 ## 2026-05-12 (PM AEST) — Stage 14b: relationships settings UI
 
 Adds a Relationships tab inside `/admin` for the relationships table introduced in Stage 14. Routes: GET/POST/PATCH/DELETE `/api/relationships`, gated by `requireUserOrOrchestrator`. Soft-delete only; hard delete is intentionally not exposed so historic coach prompts remain reproducible. Storage layer unchanged. Route handlers live in a new `server/relationships-handlers.ts` so HTTP-layer tests run hermetically without booting the live `data.db`. Net LOC: +1309/-3 across 7 files. Tests: 32 new (24 route + 8 page smoke), full suite was 205, now 237. Commit: `e000f73`. Awaits deploy via the `redeploy-republish-buoy` skill.
