@@ -23,7 +23,7 @@ const NAV: NavItem[] = [
   { href: "/evening", label: "Evening" },
   { href: "/review", label: "Review" },
   { divider: true },
-  { href: "/priorities", label: "Priorities" },
+  { href: "/tasks", label: "Tasks/Priorities" },
   { href: "/email-status", label: "Email Status" },
   { href: "/projects", label: "Projects" },
   { href: "/issues", label: "Issues" },

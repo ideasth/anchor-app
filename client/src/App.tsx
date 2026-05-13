@@ -88,6 +88,17 @@ function ReflectRedirect() {
   return null;
 }
 
+// Stage 17c (2026-05-14): the page formerly known as /priorities now
+// lives at /tasks (relabelled "Tasks/Priorities"). Old bookmarks +
+// inbound links continue to work via this client-side redirect.
+function PrioritiesRedirect() {
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    navigate("/tasks", { replace: true });
+  }, [navigate]);
+  return null;
+}
+
 function AppRouter() {
   return (
     <Suspense fallback={<LazyFallback />}>
@@ -98,7 +109,9 @@ function AppRouter() {
       <Route path="/email-status" component={EmailStatus} />
       <Route path="/projects/:id" component={ProjectDetail} />
       <Route path="/projects" component={Projects} />
-      <Route path="/priorities" component={Priorities} />
+      <Route path="/tasks" component={Priorities} />
+      {/* Stage 17c legacy redirect: /priorities → /tasks. */}
+      <Route path="/priorities" component={PrioritiesRedirect} />
       <Route path="/habits" component={HabitsPage} />
       <Route path="/evening" component={Evening} />
       {/* Legacy redirect: /reflect → /evening (Stage 9a). */}
