@@ -17,9 +17,12 @@ import {
   upsertFamilyWeekNote,
 } from "./family-storage";
 import { getSetting, KEY } from "./app-settings";
-import { getCachedEventsForFeeds } from "./ics";
+import { getCachedEventsForFeeds, eventsForDate } from "./ics";
 import { emitFamilyIcs } from "./public-calendar";
 import { storage } from "./storage";
+import { resolveTravel } from "./travel";
+import { handleSchedulingSearch } from "./scheduling-handlers";
+import { buildPlannerXlsx } from "./planner";
 import bcrypt from "bcryptjs";
 import path from "node:path";
 import fs from "node:fs";
@@ -185,6 +188,184 @@ export function makeFamilyRouter(): Router {
     } catch (err: any) {
       res.status(400).json({ error: String(err.message) });
     }
+  });
+
+  // ------------------------------------------------------------------
+  // Stage 17b — Apex planner API mirror.
+  //
+  // The family SPA now renders the same CalendarPlanner used on apex,
+  // which expects to fetch from /api/planner/events, /api/planner/notes,
+  // /api/today-events, /api/travel/today, and /api/scheduling/search.
+  // We mount those exact paths on the family router so the apex client
+  // code works unchanged; auth is enforced upstream by requireFamilyAuth.
+  //
+  // Same data store as apex (single-tenant DB). The family token IS the
+  // family member's identity — they see and edit the same planner events
+  // and notes Oliver does on apex.
+  // ------------------------------------------------------------------
+
+  async function getMergedPlannerEvents() {
+    const s = storage.getSettings();
+    return getCachedEventsForFeeds([
+      { url: s.calendar_ics_url },
+      { url: s.aupfhs_ics_url || "", summaryPrefix: "[Personal]" },
+    ]);
+  }
+
+  router.get("/api/planner/events", async (req: Request, res: Response) => {
+    try {
+      const today = new Date();
+      const todayStr = today.toISOString().slice(0, 10);
+      const addDays = (d: string, n: number) => {
+        const dt = new Date(d + "T00:00:00Z");
+        dt.setUTCDate(dt.getUTCDate() + n);
+        return dt.toISOString().slice(0, 10);
+      };
+      const from = (req.query.from as string) || todayStr;
+      const to = (req.query.to as string) || addDays(todayStr, 365);
+      const all = await getMergedPlannerEvents();
+      const fromDt = new Date(from + "T00:00:00");
+      const toDt = new Date(to + "T23:59:59");
+      const filtered = all
+        .filter((e) => {
+          const s = new Date(e.start);
+          const en = new Date(e.end);
+          return en >= fromDt && s <= toDt;
+        })
+        .sort((a, b) => +new Date(a.start) - +new Date(b.start));
+      res.json({ events: filtered });
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  });
+
+  router.get("/api/today-events", async (_req: Request, res: Response) => {
+    try {
+      const events = await getMergedPlannerEvents();
+      const today = new Date();
+      res.json({
+        date: today.toISOString(),
+        events: eventsForDate(events, today),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  });
+
+  router.get("/api/planner/notes", (req: Request, res: Response) => {
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const addDays = (d: string, n: number) => {
+      const dt = new Date(d + "T00:00:00Z");
+      dt.setUTCDate(dt.getUTCDate() + n);
+      return dt.toISOString().slice(0, 10);
+    };
+    const from = (req.query.from as string) || todayStr;
+    const to = (req.query.to as string) || addDays(todayStr, 365);
+    res.json({ notes: storage.listPlannerNotes(from, to) });
+  });
+
+  router.put("/api/planner/notes/:date", (req: Request, res: Response) => {
+    const date = String(req.params.date ?? "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return void res.status(400).json({ error: "invalid date" });
+    }
+    const note = (req.body?.note ?? "") as string;
+    if (!note.trim()) {
+      storage.deletePlannerNote(date);
+      return void res.json({ note: null });
+    }
+    res.json({ note: storage.upsertPlannerNote(date, note) });
+  });
+
+  router.get("/api/travel/today", async (_req: Request, res: Response) => {
+    try {
+      const events = await getMergedPlannerEvents();
+      const todayEvents = eventsForDate(events, new Date());
+      const locations = storage.listTravelLocations();
+      const homeAddress = storage.getSettings().home_address ?? null;
+      const items = todayEvents.map((event) => {
+        const override = storage.getTravelOverride(event.uid) ?? null;
+        const match = resolveTravel({ event, locations, override, homeAddress });
+        return {
+          event: {
+            uid: event.uid,
+            summary: event.summary,
+            start: event.start,
+            end: event.end,
+            location: event.location,
+            allDay: event.allDay,
+          },
+          ...match,
+        };
+      });
+      res.json({ items });
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  });
+
+  router.post("/api/scheduling/search", async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const rawSources = body.sources;
+    const sources: string[] = Array.isArray(rawSources)
+      ? rawSources.filter((s): s is string => typeof s === "string")
+      : [];
+    const enabledEvents: import("./ics").CalEvent[] = [];
+    if (sources.includes("outlook") || sources.includes("buoy")) {
+      try {
+        const events = await getMergedPlannerEvents();
+        for (const ev of events) enabledEvents.push(ev);
+      } catch {
+        // Non-fatal: empty calendar on fetch failure.
+      }
+    }
+    const result = await handleSchedulingSearch({ body, events: enabledEvents });
+    res.status(result.status).json(result.body);
+  });
+
+  router.get("/api/planner/export", async (req: Request, res: Response) => {
+    try {
+      const today = new Date();
+      const todayStr = today.toISOString().slice(0, 10);
+      const addDays = (d: string, n: number) => {
+        const dt = new Date(d + "T00:00:00Z");
+        dt.setUTCDate(dt.getUTCDate() + n);
+        return dt.toISOString().slice(0, 10);
+      };
+      const from = (req.query.from as string) || todayStr;
+      const to = (req.query.to as string) || addDays(todayStr, 365);
+      const all = await getMergedPlannerEvents();
+      const fromDt = new Date(from + "T00:00:00");
+      const toDt = new Date(to + "T23:59:59");
+      const filtered = all.filter((e) => {
+        const s = new Date(e.start);
+        const en = new Date(e.end);
+        return en >= fromDt && s <= toDt;
+      });
+      const notes = storage.listPlannerNotes(from, to);
+      const buf = await buildPlannerXlsx(from, to, filtered, notes);
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="buoy-planner-${from}-to-${to}.xlsx"`,
+      );
+      res.send(buf);
+    } catch (err: any) {
+      console.error("[family planner export] failed:", err);
+      res.status(500).json({ error: "export failed" });
+    }
+  });
+
+  // The apex client also probes /api/auth/status on boot. On the family host
+  // any authenticated request implies family-token auth already passed, so
+  // we report "authenticated" with a synthetic user. The apex login flow is
+  // suppressed by FAMILY_CALENDAR mode on the client side anyway.
+  router.get("/api/auth/status", (_req: Request, res: Response) => {
+    res.json({ authenticated: true, user: { name: "Family", role: "family" } });
   });
 
   // ------------------------------------------------------------------
