@@ -2,6 +2,77 @@
 
 Living document. Append new entries at the top. Each entry: date (AEST), thread summary, status, follow-ups.
 
+## 2026-05-16 (PM AEST) — Stage 19: Sibling LLM proxy (marieke-buoy + lachie-buoy)
+
+Buoy-side proxy that lets two sibling apps (`marieke-buoy`, `lachie-buoy`) borrow Buoy's Perplexity Sonar key over loopback, without ever seeing the key itself. Option A scope: proxy only, no sibling Caddy vhosts or DNS in this stage.
+
+**Locked decisions:**
+- Provider: Perplexity Sonar only. Default model `sonar-pro`. Allow-list: `sonar`, `sonar-pro`, `sonar-reasoning-pro`. Pluggable via `LLM_PROVIDER` env var (defaults to `perplexity`).
+- Endpoint: `POST /api/llm/chat` (non-streaming) + `GET /api/llm/health` (loopback liveness). Streaming variant deferred.
+- Auth — three gates in strict order, each failure returns 401 `forbidden` with no sub-case detail:
+  1. Loopback only (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`).
+  2. Known `X-Sibling-Id` header (must match registry: `marieke-buoy` or `lachie-buoy`).
+  3. Per-sibling `X-Sibling-Auth` constant-time match via `crypto.timingSafeEqual`.
+- Per-sibling secrets: env vars `MARIEKE_BUOY_PROXY_SECRET` and `LACHIE_BUOY_PROXY_SECRET`. Sourced from 1Password on VPS (operator step, not in repo).
+- Rate limits: independent sliding windows per sibling — 60/minute and 600/hour. 429 with `Retry-After` on overflow. Rate limit fires AFTER auth so anonymous probes can't drain the bucket.
+- Body validation: `messages` non-empty array of `{role, content}`; `maxTokens` integer ≤ 4000 hard cap; `temperature` ∈ [0, 1]; optional `disableSearch` boolean. 400 `invalid_model` / `invalid_request` on failure.
+- Errors: 401 forbidden (any gate), 429 rate_limited, 502 provider_error, 503 provider_unavailable (no key configured).
+- Logging: single log line per request — `caller`, `model`, `in_tokens`, `out_tokens`, `ms`, `status`. Never logs message content, response text, secret header values, or env var names. For 401 with no trusted ID: `caller=unknown ip=X`.
+- Caddy: each public hostname's `.caddy` file needs `@llm path /api/llm/*` + `respond @llm 404` so the proxy is loopback-only at the edge. Operator step on VPS, not committed.
+
+**Files added:**
+- `server/llm/sibling-registry.ts` — registry, `getSiblingSecret()`, `isKnownSiblingId()`, `listSiblingIds()`
+- `server/llm/proxy-models.ts` — `PROXY_ALLOWED_MODELS`, `PROXY_DEFAULT_MODEL`, `isAllowedModel()`
+- `server/llm/proxy.ts` — `currentProvider()`, `getProxyAdapter()` env-driven (defaults Perplexity)
+- `server/llm/proxy-rate-limit.ts` — `ProxyRateLimiter` sliding-window class, `proxyRateLimiter` singleton
+- `server/llm-proxy-routes.ts` — `registerLLMProxyRoutes(app)`, exports `isLoopbackIp`, `secretsMatch`, `validateChatBody`, `MAX_TOKENS_HARD_CAP=4000`
+- `test/stage19-llm-proxy.test.ts` — 40 new tests covering loopback gate, registry, secret compare, model allow-list, body validation, rate limiter (per-sibling isolation, minute + hour caps, sliding window release), provider resolution, route wiring, log hygiene
+- `STAGE_19_SIBLING_LLM_PROXY_SPEC.md` — design doc, signed off
+
+**Files modified:**
+- `server/routes.ts` — imports `registerLLMProxyRoutes`, mounts after `registerCoachRoutes(app)`
+
+**Test result:** 506/506 passing (was 466; +40 new). Build clean.
+
+**Deploy steps (operator, on VPS — DO BEFORE running deploy.sh):**
+1. Create two 1Password entries: "Buoy LLM Proxy — marieke-buoy" and "Buoy LLM Proxy — lachie-buoy". Use long random secrets (≥ 32 bytes base64).
+2. Materialise secrets:
+   ```
+   /home/jod/.secrets/marieke_buoy_proxy_secret  (mode 0600, owner jod)
+   /home/jod/.secrets/lachie_buoy_proxy_secret   (mode 0600, owner jod)
+   ```
+3. Update systemd EnvironmentFile for Buoy with:
+   ```
+   MARIEKE_BUOY_PROXY_SECRET=<value>
+   LACHIE_BUOY_PROXY_SECRET=<value>
+   # LLM_PROVIDER=perplexity   # optional; default
+   ```
+4. Edit each `*.caddy` site file in `/opt/buoy/ops/caddy/` (4 hostnames: buoy, anchor, buoy-family, oliver-availability) and add inside the site block:
+   ```
+   @llm path /api/llm/*
+   respond @llm 404
+   ```
+5. `sudo systemctl reload caddy`
+6. `sudo -u jod /opt/buoy/ops/deploy.sh`
+
+**Smoke test (on VPS):**
+```
+curl -sS \
+  -H "X-Sibling-Id: marieke-buoy" \
+  -H "X-Sibling-Auth: $(cat /home/jod/.secrets/marieke_buoy_proxy_secret)" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"sonar-pro","messages":[{"role":"user","content":"hi"}]}' \
+  http://127.0.0.1:5000/api/llm/chat
+```
+Expected 200 with JSON body. From any non-loopback IP or with wrong/missing headers: 401 `forbidden`. Hitting `https://buoy.thinhalo.com/api/llm/*` from the public internet: 404 (Caddy deny).
+
+**Follow-ups (deferred):**
+- Build `marieke-buoy` sibling app — separate stage. Will add its own Caddy vhost + DNS at that point.
+- Build `lachie-buoy` sibling app — separate stage. Same.
+- Streaming proxy endpoint (`POST /api/llm/chat/stream`) — defer until a sibling needs it.
+- Cost dashboard parsing proxy log lines into a Buoy usage table — deferred.
+- The retired `redeploy-republish-anchor` skill stub remains (points at `redeploy-republish-buoy`); no action needed.
+
 ## 2026-05-16 (AEST) — Stage 18: Settings default landing page + sidebar reshuffle + Calm music
 
 Three discrete UX changes, shipped in one commit.

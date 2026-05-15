@@ -15,6 +15,9 @@ import { getCachedEvents, getCachedEventsForFeeds, eventsForDate } from "./ics";
 import { computeAvailableHoursThisWeek, computeAvailableHoursToday } from "./available-hours";
 import { resolveTravel } from "./travel";
 import { registerCoachRoutes } from "./coach-routes";
+// Stage 19 (2026-05-16) — sibling LLM proxy. Mounted alongside Coach so it
+// can reuse the same LLMAdapter abstraction. Lives at /api/llm/*.
+import { registerLLMProxyRoutes } from "./llm-proxy-routes";
 import { computeCalmReviewAggregates } from "./calm-review";
 import {
   listRelationshipsHandler,
@@ -1842,6 +1845,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     getMergedPlannerEvents,
     computeAvailableHoursThisWeek,
   });
+
+  // Stage 19 (2026-05-16) — Sibling LLM proxy. Mounts /api/llm/chat and
+  // /api/llm/health. Loopback-only; auth via X-Sibling-Id + X-Sibling-Auth.
+  // No session middleware — these are system-to-system endpoints.
+  registerLLMProxyRoutes(app);
 
   // -----------------------------------------------------------------------
   // Stage 17 — Calendar settings API (apex only, behind session auth)
