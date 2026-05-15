@@ -125,7 +125,7 @@ Sibling sets `X-Sibling-Auth: <token>`. Buoy compares against the secret registe
 - Each secret is independent. `marieke-buoy`'s secret and `lachie-buoy`'s secret are different values.
 - Neither is the same as Buoy's `X-Anchor-Sync-Secret` (which is for calendar sync). New, dedicated, scoped to LLM proxy access.
 - Stored in 1Password under two entries: "Buoy LLM Proxy — marieke-buoy" and "Buoy LLM Proxy — lachie-buoy".
-- Materialised into the VPS filesystem at `/home/jod/.secrets/marieke_buoy_proxy_secret` and `/home/jod/.secrets/lachie_buoy_proxy_secret` at deploy time via the existing `secret-bootstrap` skill flow.
+- Materialised into the VPS filesystem at `/home/jod/buoy/.secrets/marieke_buoy_proxy_secret` and `/home/jod/buoy/.secrets/lachie_buoy_proxy_secret` at deploy time via the existing `secret-bootstrap` skill flow. (The Buoy `.secrets/` directory already holds `buoy_sync_secret`; these two new files sit alongside it.)
 - Baked into Buoy's env at start (via systemd `EnvironmentFile=`). Each sibling reads its own secret at start the same way.
 - Rotation: replace the affected entry in 1Password, redeploy Buoy plus the affected sibling. The other sibling is untouched.
 
@@ -196,20 +196,48 @@ Every `/api/llm/chat` call emits one structured log line:
 
 ## Caddy
 
-The Caddy configs on the VPS (in `/opt/buoy/ops/caddy/`, not in this repo) need an explicit deny for `/api/llm/*` on **every** public hostname. Snippet to add to each `*.caddy` site block, **before** the existing `reverse_proxy` directive:
+The Caddy config on the VPS lives in a single `/etc/caddy/Caddyfile` (system-installed, not in this repo). It has three Buoy site blocks covering the four hostnames:
 
+1. `anchor.thinhalo.com, buoy.thinhalo.com` (shared, uses `handle` directives)
+2. `buoy-family.thinhalo.com` (bare `reverse_proxy`)
+3. `oliver-availability.thinhalo.com` (bare `reverse_proxy`)
+
+Each block needs an explicit deny for `/api/llm/*` so the proxy is unreachable from the public internet (defence in depth — the app already rejects non-loopback callers).
+
+**For the shared anchor+buoy block** (which uses `handle`), add a `handle` for `/api/llm/*` **before** the existing `handle /port/5000/*` and default `handle`:
+
+```caddy
+anchor.thinhalo.com, buoy.thinhalo.com {
+    encode gzip zstd
+
+    # Stage 19 deny — proxy is loopback-only.
+    handle /api/llm/* {
+        respond 404
+    }
+
+    # ... existing /port/5000/* and default handle blocks unchanged ...
+}
 ```
-@llm path /api/llm/*
-respond @llm 404
+
+**For the two bare-`reverse_proxy` blocks** (`buoy-family`, `oliver-availability`), convert them to use matchers:
+
+```caddy
+buoy-family.thinhalo.com {
+    @llm path /api/llm/*
+    respond @llm 404
+    reverse_proxy 127.0.0.1:5000
+}
+
+oliver-availability.thinhalo.com {
+    @llm path /api/llm/*
+    respond @llm 404
+    reverse_proxy 127.0.0.1:5000
+}
 ```
 
-Apply to:
-- `buoy.thinhalo.com.caddy`
-- `anchor.thinhalo.com.caddy`
-- `buoy-family.thinhalo.com.caddy`
-- `oliver-availability.thinhalo.com.caddy`
+In Caddy, named matchers + a top-level `respond` short-circuit the request before `reverse_proxy` is reached. The two styles (handle-based vs matcher-based) achieve the same outcome; we use whichever fits the existing site block.
 
-Future sibling hostnames (`marieke-buoy.thinhalo.com`, `lachie-buoy.thinhalo.com`) inherit the same pattern when their vhosts are written.
+Future sibling hostnames (`marieke-buoy.thinhalo.com`, `lachie-buoy.thinhalo.com`) inherit the same pattern when their vhosts are added — they will be reverse-proxied to a separate loopback port (not 5000) and should not need to expose `/api/llm/*` either.
 
 Belt-and-braces. The handler already rejects non-loopback, but Caddy returns 404 before the request even reaches Node — so curl from the open Internet can't even tell the endpoint exists.
 
@@ -231,9 +259,9 @@ Changed (in this repo):
 - `HANDOFF.md` — new Stage 19 entry.
 
 Ops changes (outside this repo, listed for the operator):
-- `/opt/buoy/ops/caddy/*.caddy` — add the `/api/llm/*` deny block to each hostname.
+- `/etc/caddy/Caddyfile` — add the `/api/llm/*` deny to all three Buoy site blocks (covering all four hostnames). Reload with `sudo systemctl reload caddy`.
 - Buoy systemd `EnvironmentFile=` — add `MARIEKE_BUOY_PROXY_SECRET=...`, `LACHIE_BUOY_PROXY_SECRET=...`, and (optionally) `LLM_PROVIDER=perplexity`.
-- 1Password — create two new entries and seed `/home/jod/.secrets/marieke_buoy_proxy_secret` and `/home/jod/.secrets/lachie_buoy_proxy_secret`.
+- 1Password — entries `Buoy LLM Proxy — marieke-buoy` and `Buoy LLM Proxy — lachie-buoy` (vault `Computer`) already exist with the `secret` field populated. Seed `/home/jod/buoy/.secrets/marieke_buoy_proxy_secret` and `/home/jod/buoy/.secrets/lachie_buoy_proxy_secret` from those entries.
 
 Unchanged:
 - `server/llm/adapter.ts`, `server/llm/perplexity.ts` — reused as-is.
@@ -279,7 +307,7 @@ A tiny client (~40 lines) wraps that. Each sibling repo gets its own commit; thi
   ```
   curl -sS \
     -H "X-Sibling-Id: marieke-buoy" \
-    -H "X-Sibling-Auth: $(cat /home/jod/.secrets/marieke_buoy_proxy_secret)" \
+    -H "X-Sibling-Auth: $(cat /home/jod/buoy/.secrets/marieke_buoy_proxy_secret)" \
     -H 'Content-Type: application/json' \
     -d '{"model":"sonar-pro","messages":[{"role":"user","content":"hi"}]}' \
     http://127.0.0.1:5000/api/llm/chat
@@ -302,12 +330,13 @@ A tiny client (~40 lines) wraps that. Each sibling repo gets its own commit; thi
 1. Land this stage in one commit on `main` (same shape as Stage 18: spec + code + tests, all together).
 2. **Operator step** — on the VPS:
    1. Create two 1Password entries ("Buoy LLM Proxy — marieke-buoy" / "… lachie-buoy") with 64-char random base64 secrets.
-   2. Materialise into `/home/jod/.secrets/marieke_buoy_proxy_secret` and `/home/jod/.secrets/lachie_buoy_proxy_secret` (0600, owned by jod).
+   2. Materialise into `/home/jod/buoy/.secrets/marieke_buoy_proxy_secret` and `/home/jod/buoy/.secrets/lachie_buoy_proxy_secret` (0600, owned by jod). These sit alongside the existing `/home/jod/buoy/.secrets/buoy_sync_secret`.
    3. Update Buoy's systemd `EnvironmentFile` (or service unit) to load:
-      - `MARIEKE_BUOY_PROXY_SECRET=$(cat /home/jod/.secrets/marieke_buoy_proxy_secret)`
-      - `LACHIE_BUOY_PROXY_SECRET=$(cat /home/jod/.secrets/lachie_buoy_proxy_secret)`
+      - `MARIEKE_BUOY_PROXY_SECRET=$(cat /home/jod/buoy/.secrets/marieke_buoy_proxy_secret)`
+      - `LACHIE_BUOY_PROXY_SECRET=$(cat /home/jod/buoy/.secrets/lachie_buoy_proxy_secret)`
       - `LLM_PROVIDER=perplexity` (optional; this is the default)
-   4. Add the Caddy `@llm` deny block to each public-hostname `.caddy` site file.
+   4. Add the `/api/llm/*` deny block to each of the three Buoy site blocks in `/etc/caddy/Caddyfile` (see "Caddy" section for exact snippets).
+   5. `sudo caddy validate --config /etc/caddy/Caddyfile` before reload.
 3. Reload services: `sudo systemctl reload caddy`, then `sudo -u jod /opt/buoy/ops/deploy.sh`.
 4. Smoke-test with the curl commands in "Acceptance criteria" above.
 5. Only then start work on each sibling service — first feature on each sibling is "hit the proxy and print the response".

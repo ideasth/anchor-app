@@ -36,30 +36,56 @@ Buoy-side proxy that lets two sibling apps (`marieke-buoy`, `lachie-buoy`) borro
 
 **Deploy steps (operator, on VPS — DO BEFORE running deploy.sh):**
 1. Create two 1Password entries: "Buoy LLM Proxy — marieke-buoy" and "Buoy LLM Proxy — lachie-buoy". Use long random secrets (≥ 32 bytes base64).
-2. Materialise secrets:
+2. Materialise secrets (alongside the existing `buoy_sync_secret`):
    ```
-   /home/jod/.secrets/marieke_buoy_proxy_secret  (mode 0600, owner jod)
-   /home/jod/.secrets/lachie_buoy_proxy_secret   (mode 0600, owner jod)
+   /home/jod/buoy/.secrets/marieke_buoy_proxy_secret  (mode 0600, owner jod)
+   /home/jod/buoy/.secrets/lachie_buoy_proxy_secret   (mode 0600, owner jod)
    ```
-3. Update systemd EnvironmentFile for Buoy with:
+   The app working tree lives at `/home/jod/buoy/` (the `/opt/buoy` path used by deploy.sh resolves to a symlink to this directory, dating from the Stage 14 Anchor→Buoy rename). The repo's `.secrets/` directory already contains `buoy_sync_secret`; these two new files sit alongside it.
+3. Update Buoy's systemd `EnvironmentFile` with:
    ```
    MARIEKE_BUOY_PROXY_SECRET=<value>
    LACHIE_BUOY_PROXY_SECRET=<value>
    # LLM_PROVIDER=perplexity   # optional; default
    ```
-4. Edit each `*.caddy` site file in `/opt/buoy/ops/caddy/` (4 hostnames: buoy, anchor, buoy-family, oliver-availability) and add inside the site block:
+4. Patch `/etc/caddy/Caddyfile` (single file; three Buoy site blocks cover all four hostnames).
+
+   For the **shared `anchor.thinhalo.com, buoy.thinhalo.com`** block (which uses `handle` directives), add a new `handle` for `/api/llm/*` **before** the existing `handle /port/5000/*` and default `handle`:
+   ```caddy
+   anchor.thinhalo.com, buoy.thinhalo.com {
+       encode gzip zstd
+
+       # Stage 19 deny — proxy is loopback-only.
+       handle /api/llm/* {
+           respond 404
+       }
+
+       # ... existing /port/5000/* and default handle blocks unchanged ...
+   }
    ```
-   @llm path /api/llm/*
-   respond @llm 404
+
+   For the two bare-`reverse_proxy` blocks (`buoy-family`, `oliver-availability`), add a matcher and `respond` **before** `reverse_proxy`:
+   ```caddy
+   buoy-family.thinhalo.com {
+       @llm path /api/llm/*
+       respond @llm 404
+       reverse_proxy 127.0.0.1:5000
+   }
+
+   oliver-availability.thinhalo.com {
+       @llm path /api/llm/*
+       respond @llm 404
+       reverse_proxy 127.0.0.1:5000
+   }
    ```
-5. `sudo systemctl reload caddy`
+5. `sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy`
 6. `sudo -u jod /opt/buoy/ops/deploy.sh`
 
 **Smoke test (on VPS):**
 ```
 curl -sS \
   -H "X-Sibling-Id: marieke-buoy" \
-  -H "X-Sibling-Auth: $(cat /home/jod/.secrets/marieke_buoy_proxy_secret)" \
+  -H "X-Sibling-Auth: $(cat /home/jod/buoy/.secrets/marieke_buoy_proxy_secret)" \
   -H 'Content-Type: application/json' \
   -d '{"model":"sonar-pro","messages":[{"role":"user","content":"hi"}]}' \
   http://127.0.0.1:5000/api/llm/chat
