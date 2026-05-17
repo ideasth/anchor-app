@@ -478,11 +478,73 @@ export default function Today() {
         </Link>
       </section>
 
+      {/* Stage 20 — Activity today strip */}
+      <ActivityTodayStrip />
+
       <FocusSession
         task={focusTask}
         open={!!focusTask}
         onOpenChange={(v) => !v && setFocusTask(null)}
       />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Activity Today Strip
+// ---------------------------------------------------------------------------
+
+function ActivityTodayStrip() {
+  const todayDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Australia/Melbourne",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+
+  const { data } = useQuery({
+    queryKey: ["/api/activity/reports/day", todayDate],
+    queryFn: async () => {
+      const r = await apiRequest("GET", `/api/activity/reports/day?date=${todayDate}`);
+      return r.json();
+    },
+    staleTime: 60000,
+  });
+
+  if (!data || (data.totalMinutes === 0 && (!data.byCategory || data.byCategory.length === 0))) {
+    return null;
+  }
+
+  const fmtMin = (m: number) => {
+    const h = Math.floor(m / 60);
+    const min = m % 60;
+    if (h === 0) return `${min}m`;
+    return min === 0 ? `${h}h` : `${h}h ${min}m`;
+  };
+
+  return (
+    <section data-testid="section-today-activity">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-medium text-muted-foreground">Activity today</h2>
+        <Link href="/activity">
+          <span className="text-xs text-primary hover:underline">Open Activity</span>
+        </Link>
+      </div>
+      <div className="rounded-lg border border-card-border bg-card p-4">
+        <div className="flex items-center justify-between">
+          <span className="text-2xl font-bold">{fmtMin(data.totalMinutes ?? 0)}</span>
+          <span className="text-xs text-muted-foreground">
+            {data.countByStatus ? Object.entries(data.countByStatus as Record<string, number>).map(([k, v]) => `${k}: ${v}`).join(" · ") : ""}
+          </span>
+        </div>
+        {data.byCategory && data.byCategory.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {(data.byCategory as any[]).map((c: any) => (
+              <span key={c.categoryId} className="text-xs bg-muted rounded px-2 py-0.5">
+                {c.categoryName}: {fmtMin(c.minutes)}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }

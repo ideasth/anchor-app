@@ -12,6 +12,7 @@ import path from "node:path";
 import os from "node:os";
 import Database from "better-sqlite3";
 import { rawSqlite, storage } from "./storage";
+import { getActivityDb } from "./activity/db";
 import { backfillCoachSessionSummaries } from "./coach-summary-backfill";
 import { runCoachTelemetrySweepNow } from "./coach-telemetry-sweeper";
 import { listErrors, clearErrors, ringSize, recordError } from "./error-buffer";
@@ -95,6 +96,35 @@ export function registerAdminDbRoutes(
       if (!res.headersSent) {
         res.status(500).json({ error: "export failed", detail: String(err?.message || err) });
       }
+    }
+  });
+
+  // -------- ACTIVITY DB EXPORT (Stage 20) --------
+  // GET /api/admin/db/export-activity
+  // Returns a consistent snapshot of activity.db.
+  app.get("/api/admin/db/export-activity", async (req, res) => {
+    if (!requireOrchestrator(req, res)) return;
+    let tmpPath = "";
+    try {
+      const actDb = getActivityDb();
+      tmpPath = path.join(os.tmpdir(), `buoy-activity-export-${Date.now()}.db`);
+      await actDb.backup(tmpPath);
+      const stat = await fs_promises.stat(tmpPath);
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.setHeader("Content-Length", String(stat.size));
+      res.setHeader("Content-Disposition", `attachment; filename="buoy-activity-${stamp}.db"`);
+      const stream = fs.createReadStream(tmpPath);
+      stream.on("error", (err) => {
+        console.error("[admin-db] activity export stream error:", err);
+        if (!res.headersSent) res.status(500).end("export stream failed");
+      });
+      stream.on("close", async () => { try { await fs_promises.unlink(tmpPath); } catch { /* swallow */ } });
+      stream.pipe(res);
+    } catch (err: any) {
+      console.error("[admin-db] activity export failed:", err?.message || err);
+      if (tmpPath) { try { await fs_promises.unlink(tmpPath); } catch { /* swallow */ } }
+      if (!res.headersSent) res.status(500).json({ error: "activity export failed", detail: String(err?.message || err) });
     }
   });
 
@@ -498,7 +528,8 @@ export function registerAdminDbRoutes(
 
   // POST /api/admin/backup-receipt
   // Recorded by the weekly backup cron after a successful OneDrive upload.
-  // Payload: { onedriveUrl: string, mtime?: number, sizeBytes?: number, note?: string }
+  // Payload: { onedriveUrl: string, mtime?: number, sizeBytes?: number, note?: string, filesJson?: string }
+  // Stage 20: filesJson is a JSON array of { name, sha256? } objects listing DB files in the bundle.
   // Auth: X-Anchor-Sync-Secret only (no user cookie); this is a cron endpoint.
   app.post("/api/admin/backup-receipt", express.json({ limit: "4kb" }), (req, res) => {
     if (!requireOrchestrator(req, res)) return;
@@ -512,8 +543,15 @@ export function registerAdminDbRoutes(
       typeof body.sizeBytes === "number" && isFinite(body.sizeBytes) ? body.sizeBytes : null;
     const note =
       typeof body.note === "string" && body.note.length <= 500 ? body.note : null;
+    // Stage 20: accept filesJson array serialised to string, or as raw array.
+    let filesJson: string = '[]';
+    if (typeof body.filesJson === "string") {
+      filesJson = body.filesJson.slice(0, 2000);
+    } else if (Array.isArray(body.filesJson)) {
+      filesJson = JSON.stringify(body.filesJson).slice(0, 2000);
+    }
     try {
-      const r = storage.recordBackupReceipt({ onedriveUrl, mtime, sizeBytes, note });
+      const r = storage.recordBackupReceipt({ onedriveUrl, mtime, sizeBytes, note, filesJson });
       res.json({ ok: true, id: r.id, createdAt: r.createdAt });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

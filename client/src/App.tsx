@@ -38,6 +38,12 @@ const FindTime = lazy(() => import("@/pages/FindTime"));
 // Stage 17: Calendar settings pages.
 const CalendarSettings = lazy(() => import("@/pages/CalendarSettings"));
 const CalendarBlocks = lazy(() => import("@/pages/CalendarBlocks"));
+// Stage 20: Activity Log pages.
+const ActivityDashboard = lazy(() => import("@/pages/Activity/Dashboard"));
+const ActivityReports = lazy(() => import("@/pages/Activity/Reports"));
+const ActivitySearch = lazy(() => import("@/pages/Activity/Search"));
+const ActivityImport = lazy(() => import("@/pages/Activity/Import"));
+const SettingsActivity = lazy(() => import("@/pages/Activity/SettingsActivity"));
 
 // Tiny fallback shown for the few hundred ms each lazy chunk takes to fetch.
 // Intentionally minimal — a centred spinner string is less jarring than a
@@ -134,6 +140,12 @@ function AppRouter() {
       <Route path="/settings" component={SettingsRedirect} />
       <Route path="/usage" component={UsageRedirect} />
       <Route path="/admin" component={Admin} />
+      {/* Stage 20: Activity Log routes */}
+      <Route path="/activity/reports">{() => <ActivityReports />}</Route>
+      <Route path="/activity/search">{() => <ActivitySearch />}</Route>
+      <Route path="/activity/import">{() => <ActivityImport />}</Route>
+      <Route path="/activity">{() => <ActivityDashboard />}</Route>
+      <Route path="/settings/activity">{() => <SettingsActivity />}</Route>
       <Route component={NotFound} />
     </Switch>
     </Suspense>

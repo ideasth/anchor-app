@@ -217,6 +217,29 @@ describe("Stage 18 — sidebar NAV reshuffle", () => {
   it("includes a Calm link pointing at /calm", () => {
     expect(LAYOUT_SRC).toMatch(/href:\s*"\/calm",\s*label:\s*"Calm"/);
   });
+
+  // Stage 20 guard: Activity must sit between Email Status and Tasks/Priorities.
+  it("places Activity between Email Status and Tasks/Priorities (Stage 20)", () => {
+    const navMatch = LAYOUT_SRC.match(
+      /export\s+const\s+NAV:\s*NavItem\[\]\s*=\s*\[([\s\S]*?)\];/,
+    );
+    expect(navMatch).not.toBeNull();
+    const navBody = navMatch![1];
+    const hrefs: string[] = [];
+    const hrefRe = /href:\s*"([^"]+)"/g;
+    let m: RegExpExecArray | null;
+    while ((m = hrefRe.exec(navBody)) !== null) {
+      hrefs.push(m[1]);
+    }
+    const emailIdx = hrefs.indexOf("/email-status");
+    const activityIdx = hrefs.indexOf("/activity");
+    const tasksIdx = hrefs.indexOf("/tasks");
+    expect(emailIdx).toBeGreaterThanOrEqual(0);
+    expect(activityIdx).toBeGreaterThanOrEqual(0);
+    expect(tasksIdx).toBeGreaterThanOrEqual(0);
+    expect(activityIdx).toBeGreaterThan(emailIdx);
+    expect(activityIdx).toBeLessThan(tasksIdx);
+  });
 });
 
 // ----- Settings page Default Landing card -----

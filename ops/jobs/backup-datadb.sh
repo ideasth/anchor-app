@@ -54,23 +54,28 @@ chmod 700 "$TMP_DIR"
 
 # Cleanup on exit (any path).
 TMP_DB=""
-TMP_ZST=""
+TMP_ACTIVITY_DB=""
+TMP_BUNDLE=""
+TMP_BUNDLE_ZST=""
 # shellcheck disable=SC2317  # invoked via trap, shellcheck can't see that
 cleanup() {
-  if [ -n "$TMP_DB" ]  && [ -f "$TMP_DB" ];  then rm -f "$TMP_DB";  fi
-  if [ -n "$TMP_ZST" ] && [ -f "$TMP_ZST" ]; then rm -f "$TMP_ZST"; fi
+  for f in "$TMP_DB" "$TMP_ACTIVITY_DB" "$TMP_BUNDLE" "$TMP_BUNDLE_ZST"; do
+    [ -n "$f" ] && [ -f "$f" ] && rm -f "$f"
+  done
 }
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# 1. Export
+# 1. Export both databases
 # ---------------------------------------------------------------------------
 
 STAMP="$(date -u +%Y-%m-%dT%H%M%SZ)"
 YEAR="$(date -u +%Y)"
 MONTH="$(date -u +%m)"
 TMP_DB="$TMP_DIR/anchor-data-${STAMP}.db"
-TMP_ZST="${TMP_DB}.zst"
+TMP_ACTIVITY_DB="$TMP_DIR/anchor-activity-${STAMP}.db"
+TMP_BUNDLE="$TMP_DIR/anchor-data-${STAMP}.tar"
+TMP_BUNDLE_ZST="${TMP_BUNDLE}.zst"
 
 log "Exporting data.db from ${ANCHOR_BASE}/api/admin/db/export"
 HTTP_CODE=$(curl -sS -o "$TMP_DB" -w '%{http_code}' \
@@ -94,31 +99,78 @@ case "$MAGIC" in
   *) fail 3 "downloaded file is not a valid SQLite database (magic: $(printf '%q' "$MAGIC"))" ;;
 esac
 
+# Stage 20: also export activity.db if the endpoint exists.
+ACTIVITY_EXPORT_SIZE=0
+HTTP_CODE_ACTIVITY=$(curl -sS -o "$TMP_ACTIVITY_DB" -w '%{http_code}' \
+  --max-time 120 \
+  --retry 2 --retry-delay 5 \
+  -H "X-Anchor-Sync-Secret: ${SECRET}" \
+  "${ANCHOR_BASE}/api/admin/db/export-activity" 2>/dev/null) || HTTP_CODE_ACTIVITY="000"
+
+if [ "$HTTP_CODE_ACTIVITY" = "200" ]; then
+  MAGIC_ACT=$(head -c 16 "$TMP_ACTIVITY_DB" 2>/dev/null || true)
+  case "$MAGIC_ACT" in
+    "SQLite format 3"*)
+      ACTIVITY_EXPORT_SIZE=$(stat -c '%s' "$TMP_ACTIVITY_DB")
+      log "Activity DB export OK ($ACTIVITY_EXPORT_SIZE bytes)"
+      ;;
+    *)
+      log "WARNING: activity.db export returned non-SQLite content, skipping"
+      rm -f "$TMP_ACTIVITY_DB"; TMP_ACTIVITY_DB=""
+      ;;
+  esac
+else
+  log "WARNING: activity.db export returned HTTP $HTTP_CODE_ACTIVITY (endpoint may not exist yet), skipping"
+  rm -f "$TMP_ACTIVITY_DB"; TMP_ACTIVITY_DB=""
+fi
+
 # ---------------------------------------------------------------------------
-# 2. Compress
+# 2. Bundle both DBs into a single tar archive, then compress with zstd
 # ---------------------------------------------------------------------------
+
+log "Creating tar bundle..."
+# Rename files to canonical names inside the archive.
+ln -f "$TMP_DB" "$TMP_DIR/data.db" 2>/dev/null || cp "$TMP_DB" "$TMP_DIR/data.db"
+TAR_FILES="data.db"
+FILES_JSON="[\"data.db\""
+
+if [ -n "$TMP_ACTIVITY_DB" ] && [ -f "$TMP_ACTIVITY_DB" ]; then
+  ln -f "$TMP_ACTIVITY_DB" "$TMP_DIR/activity.db" 2>/dev/null || cp "$TMP_ACTIVITY_DB" "$TMP_DIR/activity.db"
+  TAR_FILES="$TAR_FILES activity.db"
+  FILES_JSON="$FILES_JSON,\"activity.db\""
+fi
+FILES_JSON="$FILES_JSON]"
+
+# shellcheck disable=SC2086
+tar -C "$TMP_DIR" -cf "$TMP_BUNDLE" $TAR_FILES \
+  || fail 1 "tar bundle creation failed"
+
+rm -f "$TMP_DIR/data.db" "$TMP_DIR/activity.db"
+rm -f "$TMP_DB"; TMP_DB=""
+rm -f "$TMP_ACTIVITY_DB"; TMP_ACTIVITY_DB=""
+
+BUNDLE_SIZE=$(stat -c '%s' "$TMP_BUNDLE")
+log "Bundle size: $BUNDLE_SIZE bytes (files: $TAR_FILES)"
 
 log "Compressing with zstd level $ZSTD_LEVEL..."
-zstd -"$ZSTD_LEVEL" -q -o "$TMP_ZST" "$TMP_DB" \
+zstd -"$ZSTD_LEVEL" -q -o "$TMP_BUNDLE_ZST" "$TMP_BUNDLE" \
   || fail 1 "zstd compression failed"
 
-COMP_SIZE=$(stat -c '%s' "$TMP_ZST")
-RATIO=$(awk -v a="$COMP_SIZE" -v b="$EXPORT_SIZE" 'BEGIN { if (b==0) print "n/a"; else printf "%.1f%%", 100*a/b }')
+COMP_SIZE=$(stat -c '%s' "$TMP_BUNDLE_ZST")
+RATIO=$(awk -v a="$COMP_SIZE" -v b="$BUNDLE_SIZE" 'BEGIN { if (b==0) print "n/a"; else printf "%.1f%%", 100*a/b }')
 log "Compressed to $COMP_SIZE bytes ($RATIO of original)"
 
-# Free the uncompressed copy early — we don't need it for upload.
-rm -f "$TMP_DB"
-TMP_DB=""
+rm -f "$TMP_BUNDLE"; TMP_BUNDLE=""
 
 # ---------------------------------------------------------------------------
 # 3. Upload
 # ---------------------------------------------------------------------------
 
 REMOTE_DIR="${RCLONE_REMOTE}:${RCLONE_PATH}/${YEAR}/${MONTH}"
-REMOTE_FILE="${REMOTE_DIR}/anchor-data-${STAMP}.db.zst"
+REMOTE_FILE="${REMOTE_DIR}/anchor-data-${STAMP}.tar.zst"
 
 log "Uploading to $REMOTE_FILE"
-rclone copyto "$TMP_ZST" "$REMOTE_FILE" \
+rclone copyto "$TMP_BUNDLE_ZST" "$REMOTE_FILE" \
   --transfers 1 \
   --retries 3 \
   --low-level-retries 5 \
@@ -127,7 +179,7 @@ rclone copyto "$TMP_ZST" "$REMOTE_FILE" \
   || fail 4 "rclone copyto failed"
 
 # Verify it landed.
-if ! rclone lsf "$REMOTE_DIR" --include "anchor-data-${STAMP}.db.zst" 2>/dev/null | grep -q . ; then
+if ! rclone lsf "$REMOTE_DIR" --include "anchor-data-${STAMP}.tar.zst" 2>/dev/null | grep -q . ; then
   fail 4 "upload appeared to succeed but file not visible at $REMOTE_FILE"
 fi
 log "Upload verified"
@@ -138,7 +190,7 @@ if URL=$(rclone link "$REMOTE_FILE" 2>/dev/null); then
   ONEDRIVE_URL="$URL"
   log "OneDrive URL: $ONEDRIVE_URL"
 else
-  ONEDRIVE_URL="onedrive://${RCLONE_PATH}/${YEAR}/${MONTH}/anchor-data-${STAMP}.db.zst"
+  ONEDRIVE_URL="onedrive://${RCLONE_PATH}/${YEAR}/${MONTH}/anchor-data-${STAMP}.tar.zst"
   log "rclone link unavailable; using pseudo-URL: $ONEDRIVE_URL"
 fi
 
@@ -147,13 +199,14 @@ fi
 # ---------------------------------------------------------------------------
 
 MTIME=$(date -u +%s)
-RECEIPT_BODY=$(printf '{"onedriveUrl":%s,"mtime":%d,"sizeBytes":%d,"note":"daily systemd timer; original=%d bytes; zstd-%s; ratio=%s"}' \
+RECEIPT_BODY=$(printf '{"onedriveUrl":%s,"mtime":%d,"sizeBytes":%d,"filesJson":%s,"note":"daily systemd timer; zstd-%s; ratio=%s; files=%s"}' \
   "$(printf '%s' "$ONEDRIVE_URL" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
   "$MTIME" \
   "$COMP_SIZE" \
-  "$EXPORT_SIZE" \
+  "$(printf '%s' "$FILES_JSON")" \
   "$ZSTD_LEVEL" \
-  "$RATIO")
+  "$RATIO" \
+  "$TAR_FILES")
 
 log "Posting backup receipt..."
 RESP=$(curl -sS \
@@ -183,7 +236,8 @@ log "Receipt recorded"
 
 log "BACKUP OK"
 log "  remote:  $REMOTE_FILE"
-log "  size:    $COMP_SIZE bytes (compressed from $EXPORT_SIZE)"
+log "  size:    $COMP_SIZE bytes (bundle)"
+log "  files:   $TAR_FILES"
 log "  stamp:   $STAMP"
 
 exit 0

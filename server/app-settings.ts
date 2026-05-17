@@ -65,6 +65,8 @@ export const KEY = {
   // Stage 18 — user-selected default landing route. Must be one of
   // ALLOWED_LANDING_ROUTES below. Stored as a plain string in the KV table.
   DEFAULT_LANDING_ROUTE: "default_landing_route",
+  // Stage 20 — include activity summary in Coach prompt (default: false).
+  COACH_INCLUDE_ACTIVITY_SUMMARY: "coach.include_activity_summary",
 } as const;
 
 // Stage 18 — allow-list for the default landing route. Mirrors the sidebar's
@@ -81,6 +83,8 @@ export const ALLOWED_LANDING_ROUTES: readonly string[] = [
   "/morning",
   "/evening",
   "/review",
+  // Stage 20 — Activity Log.
+  "/activity",
   "/tasks",
   "/email-status",
   "/projects",
@@ -123,6 +127,9 @@ function seedDefaults(db: Database.Database): void {
     // get this seeded on first boot so the server response always carries a
     // value the client can read without a null-coalesce.
     { key: KEY.DEFAULT_LANDING_ROUTE, value: "/" },
+    // Stage 20 — activity summary in Coach prompt. Off by default; flip on
+    // from Settings after reviewing a week of entry quality.
+    { key: KEY.COACH_INCLUDE_ACTIVITY_SUMMARY, value: "false" },
   ];
   const upsert = db.prepare(
     `INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING`,

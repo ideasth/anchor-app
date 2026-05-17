@@ -539,6 +539,7 @@ CREATE TABLE IF NOT EXISTS backup_receipts (
   mtime INTEGER,
   size_bytes INTEGER,
   note TEXT,
+  files_json TEXT NOT NULL DEFAULT '[]',
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_backup_receipts_created ON backup_receipts(created_at DESC);
@@ -666,6 +667,10 @@ for (const stmt of [
   "ALTER TABLE reflections ADD COLUMN alignment_activities_n INTEGER",
   "ALTER TABLE reflections ADD COLUMN top_three_status TEXT",
   "ALTER TABLE reflections ADD COLUMN braindump_raw TEXT",
+  // Stage 20 (2026-05-17) — backup_receipts.files_json: list of filenames
+  // (and optional sha256) inside the backup bundle. Default empty array
+  // for existing rows. Not NOT NULL DEFAULT to avoid breaking in-flight rows.
+  "ALTER TABLE backup_receipts ADD COLUMN files_json TEXT NOT NULL DEFAULT '[]'",
 ]) {
   try {
     sqlite.exec(stmt);
@@ -2606,18 +2611,20 @@ export class Storage {
     mtime?: number | null;
     sizeBytes?: number | null;
     note?: string | null;
+    filesJson?: string | null;  // Stage 20: JSON array of { name, sha256? } objects
   }): { id: number; createdAt: number } {
     const createdAt = Date.now();
     const result = sqlite
       .prepare(
-        `INSERT INTO backup_receipts (onedrive_url, mtime, size_bytes, note, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO backup_receipts (onedrive_url, mtime, size_bytes, note, files_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.onedriveUrl,
         input.mtime ?? null,
         input.sizeBytes ?? null,
         input.note ?? null,
+        input.filesJson ?? '[]',
         createdAt,
       );
     return { id: Number(result.lastInsertRowid), createdAt };
@@ -2629,11 +2636,13 @@ export class Storage {
     mtime: number | null;
     sizeBytes: number | null;
     note: string | null;
+    filesJson: string;
     createdAt: number;
   } | null {
     const row = sqlite
       .prepare(
-        `SELECT id, onedrive_url as onedriveUrl, mtime, size_bytes as sizeBytes, note, created_at as createdAt
+        `SELECT id, onedrive_url as onedriveUrl, mtime, size_bytes as sizeBytes, note,
+                COALESCE(files_json, '[]') as filesJson, created_at as createdAt
          FROM backup_receipts
          ORDER BY created_at DESC
          LIMIT 1`,
@@ -2645,6 +2654,7 @@ export class Storage {
           mtime: number | null;
           sizeBytes: number | null;
           note: string | null;
+          filesJson: string;
           createdAt: number;
         }
       | undefined;
@@ -2662,12 +2672,14 @@ export class Storage {
     mtime: number | null;
     sizeBytes: number | null;
     note: string | null;
+    filesJson: string;
     createdAt: number;
   }> {
     const safeLimit = Math.max(1, Math.min(Math.floor(limit), 50));
     return sqlite
       .prepare(
-        `SELECT id, onedrive_url as onedriveUrl, mtime, size_bytes as sizeBytes, note, created_at as createdAt
+        `SELECT id, onedrive_url as onedriveUrl, mtime, size_bytes as sizeBytes, note,
+                COALESCE(files_json, '[]') as filesJson, created_at as createdAt
          FROM backup_receipts
          ORDER BY created_at DESC
          LIMIT ?`,
@@ -2678,6 +2690,7 @@ export class Storage {
         mtime: number | null;
         sizeBytes: number | null;
         note: string | null;
+        filesJson: string;
         createdAt: number;
       }>;
   }

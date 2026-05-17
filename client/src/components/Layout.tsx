@@ -13,6 +13,9 @@ import { cn } from "@/lib/utils";
 // Coach) sit at the top, followed by daily planning surfaces (Today /
 // Calendar), then the existing groups. Admin is the consolidated
 // Health + Usage + Settings page (see /pages/Admin.tsx).
+// Stage 20 (2026-05-17): Activity sits above Tasks/Priorities per locked
+// user decision. It is placed between Email Status and Tasks/Priorities in the
+// information-density group.
 export type NavItem = { href: string; label: string } | { divider: true };
 export const NAV: NavItem[] = [
   { href: "/checkin", label: "Check-in" },
@@ -27,8 +30,9 @@ export const NAV: NavItem[] = [
   { href: "/evening", label: "Evening" },
   { href: "/review", label: "Review" },
   { divider: true },
-  { href: "/tasks", label: "Tasks/Priorities" },
   { href: "/email-status", label: "Email Status" },
+  { href: "/activity", label: "Activity" },
+  { href: "/tasks", label: "Tasks/Priorities" },
   { href: "/projects", label: "Projects" },
   { href: "/issues", label: "Issues" },
   { href: "/habits", label: "Habits" },

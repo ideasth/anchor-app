@@ -8,6 +8,8 @@ import { requireAuth } from "./auth";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { recordError } from "./error-buffer";
+// Stage 20 — Activity DB init at boot.
+import { getActivityDb } from "./activity/db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -70,6 +72,14 @@ app.use((req, res, next) => {
   // Register auth routes (allowlisted) and the auth gate first.
   registerAuthRoutes(app);
   app.use(requireAuth);
+
+  // Stage 20 — initialise activity.db (runs migrations, fail-fast on error).
+  try {
+    getActivityDb();
+  } catch (err) {
+    console.error("[activity/db] Failed to initialise activity.db:", err);
+    process.exit(1);
+  }
 
   await registerRoutes(httpServer, app);
 

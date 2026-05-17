@@ -18,6 +18,8 @@ import { registerCoachRoutes } from "./coach-routes";
 // Stage 19 (2026-05-16) — sibling LLM proxy. Mounted alongside Coach so it
 // can reuse the same LLMAdapter abstraction. Lives at /api/llm/*.
 import { registerLLMProxyRoutes } from "./llm-proxy-routes";
+// Stage 20 (2026-05-17) — Activity Log module.
+import { registerActivityRoutes } from "./activity-routes";
 import { computeCalmReviewAggregates } from "./calm-review";
 import {
   listRelationshipsHandler,
@@ -1850,6 +1852,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // /api/llm/health. Loopback-only; auth via X-Sibling-Id + X-Sibling-Auth.
   // No session middleware — these are system-to-system endpoints.
   registerLLMProxyRoutes(app);
+
+  // Stage 20 (2026-05-17) — Activity Log. Apex-only; session-auth-gated.
+  registerActivityRoutes(app, requireUserOrOrchestrator);
 
   // -----------------------------------------------------------------------
   // Stage 17 — Calendar settings API (apex only, behind session auth)
